@@ -1,0 +1,73 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+Thumbs.db
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ / Android Studio
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code (launch можно коммитить; локальные overrides — нет)
+.vscode/*
+!.vscode/launch.json
+
+# Секреты и локальная конфигурация
+.env
+.env.*
+*.env
+local.properties
+**/local.properties
+key.properties
+**/*.keystore
+**/*.jks
+google-services.json
+
+# Flutter / Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+**/doc/api/
+**/ios/Flutter/.last_build_id
+pubspec_overrides.yaml
+*.freezed.dart
+*.g.dart
+
+# Сборки и артефакты
+/build/
+/coverage/
+*.apk
+*.aab
+*.ipa
+*.hprof
+
+# Symbolication / obfuscation
+app.*.symbols
+app.*.map.json
+
+# Android (дополнительно к android/.gitignore)
+/android/app/debug
+/android/app/profile
+/android/app/release
+.cxx/
+
+# Временные и отладочные файлы
+tmp_*
+tmp_*.html
+*.tmp.html
+
+# Сохранённые офлайн-дампы страниц itch (отладка WebView)
+/Sites/
