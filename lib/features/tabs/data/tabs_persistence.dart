@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/tab_entry.dart';
@@ -34,6 +35,12 @@ class TabsPersistence {
   TabsPersistence._();
 
   static const _storageKey = 'itchao.tabs.v1';
+  static const _activeTabKey = 'itchao.tabs.active_id';
+
+  static String _encodePayload(Map<String, dynamic> payload) => jsonEncode(payload);
+
+  static Map<String, dynamic> _decodePayload(String raw) =>
+      jsonDecode(raw) as Map<String, dynamic>;
 
   static Future<PersistedTabsSnapshot?> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -42,7 +49,7 @@ class TabsPersistence {
       return null;
     }
     try {
-      final json = jsonDecode(raw) as Map<String, dynamic>;
+      final json = await compute(_decodePayload, raw);
       final tabsJson = json['openTabs'] as List<dynamic>? ?? const [];
       final openTabs = tabsJson
           .whereType<Map<String, dynamic>>()
@@ -61,7 +68,10 @@ class TabsPersistence {
       }
 
       var activeTabId = json['activeTabId'] as String? ?? openTabs.first.id;
-      if (!openTabs.any((t) => t.id == activeTabId)) {
+      final quickActive = prefs.getString(_activeTabKey);
+      if (quickActive != null && openTabs.any((t) => t.id == quickActive)) {
+        activeTabId = quickActive;
+      } else if (!openTabs.any((t) => t.id == activeTabId)) {
         activeTabId = openTabs.first.id;
       }
 
@@ -109,6 +119,14 @@ class TabsPersistence {
           entry.key: [for (final frame in entry.value) frame.toJson()],
       },
     };
-    await prefs.setString(_storageKey, jsonEncode(payload));
+    final raw = await compute(_encodePayload, payload);
+    await prefs.setString(_storageKey, raw);
+    await prefs.setString(_activeTabKey, state.activeTabId);
+  }
+
+  /// Быстрое сохранение только активной вкладки (переключение в drawer).
+  static Future<void> saveActiveTabId(String activeTabId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_activeTabKey, activeTabId);
   }
 }

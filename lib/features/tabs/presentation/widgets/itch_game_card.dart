@@ -3,7 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/theme/itch_colors.dart';
+import '../../../../core/utils/itch_cached_network_image.dart';
 import '../../../../data/models.dart';
+import '../../../../domain/use_cases/launch_game_use_case.dart';
+import '../../../../domain/use_cases/providers.dart';
+import '../../../install/game_install_status_provider.dart';
 import '../../game_page_url.dart';
 import '../../tabs_controller.dart';
 
@@ -32,6 +36,7 @@ class ItchGameCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final uiState = ref.watch(gameInstallUiStateProvider(game.id));
     if (compact) {
       return SizedBox(
         width: ItchGameCoverSize.stripeWidth,
@@ -62,7 +67,8 @@ class ItchGameCard extends ConsumerWidget {
             ),
           ),
           _InstallIconButton(
-            onPressed: () => _queueInstall(context),
+            uiState: uiState,
+            onPressed: () => _onPrimary(context, ref, uiState),
           ),
         ],
       ),
@@ -70,16 +76,49 @@ class ItchGameCard extends ConsumerWidget {
   }
 
   void _openGamePage(WidgetRef ref) {
-    ref.read(tabsControllerProvider.notifier).openTab(
+    ref.read(tabsControllerProvider.notifier).navigateActiveTab(
       itchGamePageUrl(game),
       label: game.title,
     );
   }
 
-  void _queueInstall(BuildContext context) {
-    context.push(
-      '/downloads/new/${game.id}?title=${Uri.encodeComponent(game.title)}',
+  Future<void> _onPrimary(
+    BuildContext context,
+    WidgetRef ref,
+    GameInstallUiState uiState,
+  ) async {
+    if (uiState.action == GamePrimaryAction.play) {
+      try {
+        await ref.read(launchGameUseCaseProvider).call(
+          gameId: game.id,
+          title: game.title,
+          coverUrl: game.coverUrl,
+        );
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Не удалось запустить: $e')),
+          );
+        }
+      }
+      return;
+    }
+    if (uiState.action == GamePrimaryAction.downloading) {
+      context.push('/downloads');
+      return;
+    }
+    final reason = uiState.action == GamePrimaryAction.update
+        ? DownloadReason.update
+        : DownloadReason.install;
+    await ref.read(enqueueDownloadUseCaseProvider).call(
+      gameId: game.id,
+      gameTitle: game.title,
+      reason: reason,
+      coverUrl: game.coverUrl,
     );
+    if (context.mounted) {
+      context.push('/downloads');
+    }
   }
 }
 
@@ -148,18 +187,25 @@ class _GameInfo extends StatelessWidget {
 }
 
 class _InstallIconButton extends StatelessWidget {
-  const _InstallIconButton({required this.onPressed});
+  const _InstallIconButton({required this.uiState, required this.onPressed});
 
+  final GameInstallUiState uiState;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
+    final (icon, tooltip) = switch (uiState.action) {
+      GamePrimaryAction.play => (Icons.play_arrow_rounded, 'Играть'),
+      GamePrimaryAction.update => (Icons.system_update_rounded, 'Обновить'),
+      GamePrimaryAction.downloading => (Icons.downloading, 'Скачивание'),
+      GamePrimaryAction.install => (Icons.download_rounded, 'Установить'),
+    };
     return Material(
       color: Colors.transparent,
       child: IconButton(
         onPressed: onPressed,
-        tooltip: 'Установить',
-        icon: const Icon(Icons.download_rounded),
+        tooltip: tooltip,
+        icon: Icon(icon),
         style: IconButton.styleFrom(
           backgroundColor: ItchColors.accent,
           foregroundColor: ItchColors.ivory,
@@ -203,11 +249,11 @@ class _CoverThumb extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
-        boxShadow: [
+        boxShadow: const [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.45),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
+            color: Color(0x73000000),
+            blurRadius: 6,
+            offset: Offset(0, 2),
           ),
         ],
       ),
@@ -268,15 +314,21 @@ class _CoverImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final url = game.coverUrl;
-    if (url != null && url.isNotEmpty) {
-      return Image.network(
-        url,
-        fit: BoxFit.cover,
-        alignment: Alignment.center,
-        errorBuilder: (_, _, _) => const _CoverPlaceholder(),
-      );
+    if (url == null || url.isEmpty) {
+      return const _CoverPlaceholder();
     }
-    return const _CoverPlaceholder();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return ItchCachedNetworkImage(
+          url: url,
+          width: constraints.maxWidth,
+          height: constraints.maxHeight,
+          fit: BoxFit.cover,
+          alignment: Alignment.center,
+          errorWidget: const _CoverPlaceholder(),
+        );
+      },
+    );
   }
 }
 

@@ -337,6 +337,13 @@ class CollectionsController extends AsyncNotifier<CollectionsState> {
     return filtered;
   }
 
+  static bool _defaultReverse(CollectionSortField field) {
+    return switch (field) {
+      CollectionSortField.title => false,
+      CollectionSortField.updatedAt => true,
+    };
+  }
+
   Future<void> refresh() async {
     state = const AsyncLoading();
     state = await AsyncValue.guard(_load);
@@ -364,9 +371,13 @@ class CollectionsController extends AsyncNotifier<CollectionsState> {
     );
   }
 
-  Future<void> setSort(CollectionSortField field, {required bool reverse}) async {
-    sortField = field;
-    sortReverse = reverse;
+  Future<void> setSort(CollectionSortField field, {bool? reverse}) async {
+    if (sortField == field && reverse == null) {
+      sortReverse = !sortReverse;
+    } else {
+      sortField = field;
+      sortReverse = reverse ?? _defaultReverse(field);
+    }
     if (_cached.isEmpty) {
       await refresh();
       return;

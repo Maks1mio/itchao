@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../data/models.dart';
 import '../../../collections/collection_detail_notifier.dart';
 import '../../../collections/collections_controller.dart';
+import '../tab_chrome_provider.dart';
 import '../widgets/itch_game_card.dart';
+import '../widgets/tab_chrome_toolbars.dart';
 
 class CollectionDetailPage extends ConsumerStatefulWidget {
   const CollectionDetailPage({required this.collectionId, required this.title, super.key});
@@ -21,19 +23,45 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   final _scrollController = ScrollController();
   var _query = '';
   var _loadMoreRequested = false;
+  var _subtitle = '';
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _bindChrome());
   }
 
   @override
   void dispose() {
+    final chrome = ref.read(tabChromeProvider.notifier);
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
+    Future.microtask(() => chrome.clearPageMenu());
+  }
+
+  void _bindChrome() {
+    if (!mounted) {
+      return;
+    }
+    final hint = _subtitle.isEmpty ? 'Фильтр…' : 'Фильтр… · $_subtitle';
+    ref.read(tabChromeProvider.notifier).setAppBarContent(
+      title: CollectionDetailAppBarTitle(
+        searchController: _searchController,
+        hintText: hint,
+        onChanged: (value) => setState(() => _query = value.trim().toLowerCase()),
+      ),
+    );
+  }
+
+  void _updateSubtitle(String subtitle) {
+    if (_subtitle == subtitle) {
+      return;
+    }
+    _subtitle = subtitle;
+    _bindChrome();
   }
 
   void _onScroll() {
@@ -59,83 +87,55 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   @override
   Widget build(BuildContext context) {
     final detail = ref.watch(collectionDetailProvider(widget.collectionId));
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-          child: detail.maybeWhen(
-            data: (state) {
-              final total = state.expectedCount > 0 ? state.expectedCount : state.games.length;
-              final subtitle = state.isLoadingMore && state.expectedCount > 0
-                  ? '${state.games.length} / $total'
-                  : '$total игр';
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(widget.title, style: Theme.of(context).textTheme.headlineSmall),
-                  const SizedBox(height: 2),
-                  Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-                ],
-              );
-            },
-            orElse: () => Text(widget.title, style: Theme.of(context).textTheme.headlineSmall),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-          child: TextField(
-            controller: _searchController,
-            decoration: const InputDecoration(
-              hintText: 'Фильтр…',
-              prefixIcon: Icon(Icons.search),
-              isDense: true,
-            ),
-            onChanged: (value) => setState(() => _query = value.trim().toLowerCase()),
-          ),
-        ),
-        Expanded(
-          child: detail.when(
-            data: (state) => _buildGamesList(context, state),
-            error: (e, _) => Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text('Ошибка: $e', textAlign: TextAlign.center),
-                    const SizedBox(height: 12),
-                    FilledButton(
-                      onPressed: () => ref.invalidate(collectionDetailProvider(widget.collectionId)),
-                      child: const Text('Повторить'),
-                    ),
-                  ],
-                ),
+
+    ref.listen(collectionDetailProvider(widget.collectionId), (prev, next) {
+      next.whenData((state) {
+        final total = state.expectedCount > 0 ? state.expectedCount : state.games.length;
+        final subtitle = state.isLoadingMore && state.expectedCount > 0
+            ? '${state.games.length} / $total игр'
+            : '$total игр';
+        _updateSubtitle(subtitle);
+      });
+    });
+
+    return detail.when(
+      data: (state) => _buildGamesList(context, state),
+      error: (e, _) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text('Ошибка: $e', textAlign: TextAlign.center),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: () => ref.invalidate(collectionDetailProvider(widget.collectionId)),
+                child: const Text('Повторить'),
               ),
-            ),
-            loading: () {
-              final cached =
-                  ref.read(collectionsControllerProvider.notifier).cachedGamesFor(widget.collectionId);
-              if (cached != null && cached.isNotEmpty) {
-                return _buildGamesList(
-                  context,
-                  CollectionDetailState(games: cached, hasMore: true, isLoadingMore: true),
-                );
-              }
-              return const Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 12),
-                    Text('Загрузка игр коллекции…'),
-                  ],
-                ),
-              );
-            },
+            ],
           ),
         ),
-      ],
+      ),
+      loading: () {
+        final cached =
+            ref.read(collectionsControllerProvider.notifier).cachedGamesFor(widget.collectionId);
+        if (cached != null && cached.isNotEmpty) {
+          return _buildGamesList(
+            context,
+            CollectionDetailState(games: cached, hasMore: true, isLoadingMore: true),
+          );
+        }
+        return const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 12),
+              Text('Загрузка игр коллекции…'),
+            ],
+          ),
+        );
+      },
     );
   }
 

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../domain/use_cases/providers.dart';
+import '../../features/auth/presentation/api_keys_setup_page.dart';
 import '../../features/auth/presentation/oauth_callback_page.dart';
 import '../../features/auth/presentation/oauth_web_login_page.dart';
 import '../../features/downloads/presentation/downloads_page.dart';
@@ -15,6 +16,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(path: '/gate', builder: (_, _) => const GatePage()),
       GoRoute(path: '/oauth-login', builder: (_, _) => const OAuthWebLoginPage()),
+      GoRoute(path: '/api-keys-setup', builder: (_, _) => const ApiKeysSetupPage()),
       GoRoute(
         path: '/callback',
         builder: (_, state) => OAuthCallbackPage(callbackUri: state.uri),
@@ -28,7 +30,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/library',
         redirect: (_, _) => '/tabs',
       ),
-      GoRoute(path: '/downloads', builder: (_, _) => const DownloadsPage()),
+      GoRoute(
+        path: '/downloads',
+        builder: (_, _) => const DownloadsPage(standalone: true),
+      ),
       GoRoute(
         path: '/downloads/new/:gameId',
         redirect: (_, state) {

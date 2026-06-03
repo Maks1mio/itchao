@@ -2,6 +2,8 @@ enum AppRouteTab { library, downloads, settings }
 
 enum DownloadStatus { queued, running, completed, failed }
 
+enum DownloadReason { install, update, reinstall }
+
 class UserProfile {
   const UserProfile({
     required this.id,
@@ -97,6 +99,15 @@ class DownloadTask {
     required this.gameTitle,
     required this.progress,
     required this.status,
+    this.reason = DownloadReason.install,
+    this.errorMessage,
+    this.coverUrl,
+    this.filename,
+    this.startedAt,
+    this.bytesPerSecond,
+    this.etaSeconds,
+    this.speedSamples = const [],
+    this.packageName,
   });
 
   final String id;
@@ -104,6 +115,18 @@ class DownloadTask {
   final String gameTitle;
   final double progress;
   final DownloadStatus status;
+  final DownloadReason reason;
+  final String? errorMessage;
+  final String? coverUrl;
+  final String? filename;
+  final DateTime? startedAt;
+  final double? bytesPerSecond;
+  final int? etaSeconds;
+  final List<double> speedSamples;
+  final String? packageName;
+
+  bool get isActive =>
+      status == DownloadStatus.queued || status == DownloadStatus.running;
 
   DownloadTask copyWith({
     String? id,
@@ -111,6 +134,15 @@ class DownloadTask {
     String? gameTitle,
     double? progress,
     DownloadStatus? status,
+    DownloadReason? reason,
+    String? errorMessage,
+    String? coverUrl,
+    String? filename,
+    DateTime? startedAt,
+    double? bytesPerSecond,
+    int? etaSeconds,
+    List<double>? speedSamples,
+    String? packageName,
   }) {
     return DownloadTask(
       id: id ?? this.id,
@@ -118,6 +150,15 @@ class DownloadTask {
       gameTitle: gameTitle ?? this.gameTitle,
       progress: progress ?? this.progress,
       status: status ?? this.status,
+      reason: reason ?? this.reason,
+      errorMessage: errorMessage,
+      coverUrl: coverUrl ?? this.coverUrl,
+      filename: filename ?? this.filename,
+      startedAt: startedAt ?? this.startedAt,
+      bytesPerSecond: bytesPerSecond ?? this.bytesPerSecond,
+      etaSeconds: etaSeconds ?? this.etaSeconds,
+      speedSamples: speedSamples ?? this.speedSamples,
+      packageName: packageName ?? this.packageName,
     );
   }
 }

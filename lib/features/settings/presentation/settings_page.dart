@@ -64,6 +64,23 @@ class SettingsPage extends ConsumerWidget {
                 ],
               ),
               const SizedBox(height: 24),
+              Text('Скачивание и установка', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              const Text(
+                'OAuth не даёт доступ к файлам. Ключ desktop/web подтягивается при входе '
+                'или кнопкой ниже.',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FilledButton.tonalIcon(
+                  onPressed: () => context.push('/api-keys-setup'),
+                  icon: const Icon(Icons.key, size: 18),
+                  label: const Text('Обновить API key автоматически'),
+                ),
+              ),
+              const SizedBox(height: 24),
               Text('Коллекции (полный доступ)', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               const Text(

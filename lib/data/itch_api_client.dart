@@ -1,8 +1,9 @@
 import 'dart:convert';
-
 import 'package:http/http.dart' as http;
 
 import 'api_exception.dart';
+import 'install_models.dart';
+import 'json_list_utils.dart';
 import 'models.dart';
 
 class ItchApiClient {
@@ -78,11 +79,7 @@ class ItchApiClient {
 
   List<LibraryGame> _parseOwnedKeysBody(Map<String, dynamic> body) {
     final gameMaps = <Map<String, dynamic>>[];
-    final ownedKeys = body['owned_keys'] as List<dynamic>? ?? const <dynamic>[];
-    for (final raw in ownedKeys) {
-      if (raw is! Map<String, dynamic>) {
-        continue;
-      }
+    for (final raw in normalizeJsonObjectList(body['owned_keys'])) {
       final game = raw['game'];
       if (game is Map<String, dynamic>) {
         gameMaps.add(game);
@@ -101,16 +98,10 @@ class ItchApiClient {
         }
       }
     }
-    final ownedKeys = body['owned_keys'] as List<dynamic>?;
-    if (ownedKeys != null) {
-      for (final raw in ownedKeys) {
-        if (raw is! Map<String, dynamic>) {
-          continue;
-        }
-        final game = raw['game'];
-        if (game is Map<String, dynamic>) {
-          gameMaps.add(game);
-        }
+    for (final raw in normalizeJsonObjectList(body['owned_keys'])) {
+      final game = raw['game'];
+      if (game is Map<String, dynamic>) {
+        gameMaps.add(game);
       }
     }
     return _dedupeAndMapGames(gameMaps);
@@ -129,7 +120,7 @@ class ItchApiClient {
   }
 
   LibraryGame _libraryGameFromMap(Map<String, dynamic> map) {
-    final traits = map['traits'] as List<dynamic>? ?? const <dynamic>[];
+    final traits = stringListFromJson(map['traits']);
     return LibraryGame(
       id: (map['id'] as num?)?.toInt() ?? 0,
       title: map['title'] as String? ?? 'Untitled',
@@ -142,10 +133,9 @@ class ItchApiClient {
     );
   }
 
-  List<String> _platformsFromTraits(List<dynamic> traits) {
+  List<String> _platformsFromTraits(List<String> traits) {
     final platforms = <String>[];
-    for (final raw in traits) {
-      final t = raw.toString();
+    for (final t in traits) {
       if (t == 'p_windows') {
         platforms.add('windows');
       } else if (t == 'p_osx') {
@@ -345,6 +335,317 @@ class ItchApiClient {
       displayName: user['display_name'] as String? ?? (user['username'] as String? ?? 'itch-user'),
       coverUrl: user['cover_url'] as String?,
     );
+  }
+
+  /// OAuth scope `game:view:ownership` — только для игр создателя OAuth-приложения.
+  /// Numeric download key id from owned-keys (for paid/claimed games).
+  Future<int?> findDownloadKeyId({
+    required String token,
+    required int gameId,
+    int maxPages = 64,
+  }) async {
+    for (var page = 1; page <= maxPages; page++) {
+      final uri = Uri.parse('$_apiBase/profile/owned-keys').replace(
+        queryParameters: {'page': '$page'},
+      );
+      final response = await _getBearer(uri.toString(), token);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return null;
+      }
+      final body = _decodeMap(response);
+      if (_hasErrors(body)) {
+        return null;
+      }
+      for (final raw in normalizeJsonObjectList(body['owned_keys'])) {
+        final keyGameId = (raw['game_id'] as num?)?.toInt();
+        final nestedGame = raw['game'];
+        final nestedId = nestedGame is Map<String, dynamic>
+            ? (nestedGame['id'] as num?)?.toInt()
+            : null;
+        if (keyGameId == gameId || nestedId == gameId) {
+          return (raw['id'] as num?)?.toInt();
+        }
+      }
+      if (normalizeJsonObjectList(body['owned_keys']).isEmpty) {
+        break;
+      }
+    }
+    return null;
+  }
+
+  Future<List<GameUpload>> fetchGameUploads({
+    required String token,
+    required int gameId,
+    int? downloadKeyId,
+  }) async {
+    final modern = await _fetchUploadsModern(
+      token: token,
+      gameId: gameId,
+      downloadKeyId: downloadKeyId,
+    );
+    if (modern != null) {
+      return modern;
+    }
+    return _fetchUploadsLegacy(
+      token: token,
+      gameId: gameId,
+      downloadKeyId: downloadKeyId,
+    );
+  }
+
+  Future<List<GameUpload>?> _fetchUploadsModern({
+    required String token,
+    required int gameId,
+    int? downloadKeyId,
+  }) async {
+    final params = <String, String>{};
+    if (downloadKeyId != null) {
+      params['download_key_id'] = '$downloadKeyId';
+    }
+    final uri = Uri.parse('$_apiBase/games/$gameId/uploads').replace(
+      queryParameters: params.isEmpty ? null : params,
+    );
+    final response = await _getBearer(uri.toString(), token);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return null;
+    }
+    try {
+      return _parseUploadsResponse(response);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<List<GameUpload>> _fetchUploadsLegacy({
+    required String token,
+    required int gameId,
+    int? downloadKeyId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/1/$token/game/$gameId/uploads').replace(
+      queryParameters: downloadKeyId != null
+          ? {'download_key_id': '$downloadKeyId'}
+          : null,
+    );
+    final response = await _client.get(uri);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Не удалось получить список файлов (${response.statusCode})');
+    }
+    return _parseUploadsResponse(response);
+  }
+
+  List<GameUpload> _parseUploadsResponse(http.Response response) {
+    final decoded = jsonDecode(response.body);
+    if (decoded is List) {
+      return _parseUploads(decoded);
+    }
+    if (decoded is Map<String, dynamic>) {
+      if (_hasErrors(decoded)) {
+        return const [];
+      }
+      return _parseUploads(decoded['uploads'] ?? decoded);
+    }
+    return const [];
+  }
+
+  List<GameUpload> _parseUploads(dynamic raw) {
+    return normalizeJsonObjectList(raw)
+        .map(GameUpload.fromMap)
+        .where((u) => u.id > 0)
+        .toList();
+  }
+
+  GameUpload? pickAndroidUpload(List<GameUpload> uploads) {
+    final apks = uploads.where((u) => u.isAndroidApk).toList();
+    if (apks.isEmpty) {
+      return null;
+    }
+    apks.sort((a, b) {
+      final aApk = a.filename.toLowerCase().endsWith('.apk');
+      final bApk = b.filename.toLowerCase().endsWith('.apk');
+      if (aApk != bApk) {
+        return aApk ? -1 : 1;
+      }
+      return 0;
+    });
+    return apks.first;
+  }
+
+  Future<Uri> resolveUploadDownloadUrl({
+    required String token,
+    required int uploadId,
+    int? downloadKeyId,
+  }) async {
+    final query = <String, String>{
+      'api_key': token,
+      if (downloadKeyId != null) 'download_key_id': '$downloadKeyId',
+    };
+
+    final legacyUri = Uri.parse('$baseUrl/api/1/$token/upload/$uploadId/download').replace(
+      queryParameters: downloadKeyId != null
+          ? {'download_key_id': '$downloadKeyId'}
+          : null,
+    );
+    final legacyUrl = _extractRedirectOrUrl(await _client.get(legacyUri));
+    if (legacyUrl != null) {
+      return legacyUrl;
+    }
+
+    final modernUri = Uri.parse('$_apiBase/uploads/$uploadId/download').replace(
+      queryParameters: query,
+    );
+    final modernUrl = _extractRedirectOrUrl(
+      await _client.get(
+        modernUri,
+        headers: {'Authorization': 'Bearer $token'},
+      ),
+    );
+    if (modernUrl != null) {
+      return modernUrl;
+    }
+
+    throw Exception(
+      'Не удалось получить ссылку на скачивание. '
+      'Укажите полный API key с itch.io в настройках (OAuth не подходит для загрузок).',
+    );
+  }
+
+  Uri? _extractRedirectOrUrl(http.Response response) {
+    if (response.statusCode >= 300 && response.statusCode < 400) {
+      final location = response.headers['location'];
+      if (location != null && location.isNotEmpty) {
+        return Uri.parse(location);
+      }
+    }
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      try {
+        final body = _decodeMap(response);
+        if (_hasErrors(body)) {
+          return null;
+        }
+        final url = body['url'] as String? ?? body['download_url'] as String?;
+        if (url != null && url.isNotEmpty) {
+          return Uri.parse(url);
+        }
+      } catch (_) {
+        final finalUrl = response.request?.url;
+        if (finalUrl != null) {
+          return finalUrl;
+        }
+      }
+      final contentType = response.headers['content-type'] ?? '';
+      if (!contentType.contains('json') && response.request?.url != null) {
+        return response.request!.url;
+      }
+    }
+    return null;
+  }
+
+  Future<String?> fetchWharfLatestVersion({
+    required int gameId,
+    required String channelName,
+  }) async {
+    final uri = Uri.parse('$_apiBase/wharf/latest').replace(
+      queryParameters: {
+        'game_id': '$gameId',
+        'channel_name': channelName,
+      },
+    );
+    final response = await _client.get(uri);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return null;
+    }
+    final body = _decodeMap(response);
+    if (_hasErrors(body)) {
+      return null;
+    }
+    return body['latest'] as String?;
+  }
+
+  /// Канонический URL витрины (`https://author.itch.io/slug`).
+  Future<String?> fetchGameStoreUrl({
+    required String token,
+    required int gameId,
+  }) async {
+    if (gameId <= 0) {
+      return null;
+    }
+    final response = await _getBearer('$_apiBase/games/$gameId', token);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return null;
+    }
+    final body = _decodeMap(response);
+    if (_hasErrors(body)) {
+      return null;
+    }
+    final game = body['game'];
+    if (game is Map<String, dynamic>) {
+      return game['url'] as String?;
+    }
+    return null;
+  }
+
+  /// URL из купленных игр (owned-keys), если в кэше библиотеки нет `url`.
+  Future<String?> findOwnedGameUrl({
+    required String token,
+    required int gameId,
+    int maxPages = 64,
+  }) async {
+    if (gameId <= 0) {
+      return null;
+    }
+    for (var page = 1; page <= maxPages; page++) {
+      final uri = Uri.parse('$_apiBase/profile/owned-keys').replace(
+        queryParameters: {'page': '$page'},
+      );
+      final response = await _getBearer(uri.toString(), token);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return null;
+      }
+      final body = _decodeMap(response);
+      if (_hasErrors(body)) {
+        return null;
+      }
+      final keys = normalizeJsonObjectList(body['owned_keys']);
+      if (keys.isEmpty) {
+        break;
+      }
+      for (final raw in keys) {
+        final nested = raw['game'];
+        final nestedId = nested is Map<String, dynamic>
+            ? (nested['id'] as num?)?.toInt()
+            : null;
+        final keyGameId = (raw['game_id'] as num?)?.toInt();
+        if (nestedId != gameId && keyGameId != gameId) {
+          continue;
+        }
+        if (nested is Map<String, dynamic>) {
+          final url = nested['url'] as String?;
+          if (url != null && url.trim().isNotEmpty) {
+            return url.trim();
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<bool> checkGameOwnership({required String token, required int gameId}) async {
+    if (gameId <= 0) {
+      return false;
+    }
+    try {
+      final response = await _getBearer('$_apiBase/games/$gameId/ownership', token);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return false;
+      }
+      final body = _decodeMap(response);
+      if (_hasErrors(body)) {
+        return false;
+      }
+      return body['owned'] == true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<http.Response> _getBearer(String url, String token) {

@@ -16,9 +16,20 @@ class _GatePageState extends ConsumerState<GatePage> {
   Widget build(BuildContext context) {
     final authState = ref.watch(authControllerProvider);
     ref.listen(authControllerProvider, (_, next) {
-      if (next.hasValue && next.value != null && mounted) {
-        context.go('/tabs');
+      if (!next.hasValue || next.value == null || !mounted) {
+        return;
       }
+      Future.microtask(() async {
+        final full = await ref.read(authControllerProvider.notifier).readFullApiKey();
+        if (!mounted) {
+          return;
+        }
+        if (full == null || full.isEmpty) {
+          context.go('/api-keys-setup');
+        } else {
+          context.go('/tabs');
+        }
+      });
     });
 
     return Scaffold(
@@ -28,8 +39,10 @@ class _GatePageState extends ConsumerState<GatePage> {
         child: ListView(
           children: [
             const Text(
-              'Вход выполняется во встроенном браузере приложения. '
-              'Сессия itch.io сохраняется между вкладками.',
+              '1. Войдите через itch.io (OAuth приложения).\n'
+              '2. На следующем шаге откроется страница API keys — '
+              'при необходимости введите пароль; ключ для загрузок подтянется автоматически '
+              '(сначала desktop, иначе web).',
             ),
             const SizedBox(height: 16),
             FilledButton(

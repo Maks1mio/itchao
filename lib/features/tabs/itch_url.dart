@@ -3,11 +3,14 @@ class ItchUrl {
     required this.page,
     this.segment,
     this.externalUrl,
+    this.displayLabel,
   });
 
   final String page;
   final String? segment;
   final String? externalUrl;
+  /// Подпись вкладки из `?label=` (название игры при `itch://games/:id`).
+  final String? displayLabel;
 
   bool get isExternal => externalUrl != null;
 
@@ -24,7 +27,11 @@ class ItchUrl {
     }
     final page = uri.host.isNotEmpty ? uri.host : (uri.pathSegments.isNotEmpty ? uri.pathSegments.first : 'new-tab');
     final segment = uri.pathSegments.isNotEmpty && uri.host.isNotEmpty ? uri.pathSegments.first : null;
-    return ItchUrl(page: page, segment: segment);
+    final labelParam = uri.queryParameters['label'];
+    final displayLabel = labelParam != null && labelParam.isNotEmpty
+        ? Uri.decodeComponent(labelParam)
+        : null;
+    return ItchUrl(page: page, segment: segment, displayLabel: displayLabel);
   }
 
   static String labelFor(String url) {
@@ -38,7 +45,11 @@ class ItchUrl {
       case 'featured':
         return 'Обзор';
       case 'library':
-        return parsed.segment == 'installed' ? 'Установленные' : 'Игротека';
+        return switch (parsed.segment) {
+          'installed' => 'Установленные',
+          'purchased' => 'Купленные',
+          _ => 'Игротека',
+        };
       case 'collections':
         return parsed.segment != null ? 'Коллекция' : 'Коллекции';
       case 'dashboard':
@@ -51,6 +62,8 @@ class ItchUrl {
         return 'Настройки';
       case 'history':
         return 'История';
+      case 'games':
+        return 'Игра';
       default:
         return parsed.page;
     }

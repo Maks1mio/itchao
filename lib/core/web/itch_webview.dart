@@ -6,6 +6,7 @@ class ItchWebView {
   static WebViewController create({
     required void Function(String url) onUrlChanged,
     void Function(bool isLoading)? onLoadingChanged,
+    void Function(String url)? onPageFinished,
     NavigationUrlHandler? onNavigationUrl,
   }) {
     return WebViewController()
@@ -25,6 +26,7 @@ class ItchWebView {
           onPageFinished: (url) {
             onLoadingChanged?.call(false);
             onUrlChanged(url);
+            onPageFinished?.call(url);
           },
           onUrlChange: (change) {
             final url = change.url;

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <external-files-path name="external_files" path="." />
+    <files-path name="files" path="." />
+    <files-path name="app_flutter" path="app_flutter/" />
+    <!-- itchao game APKs: app_flutter/itchao/games/{id}/ -->
+    <files-path name="itchao_games" path="app_flutter/itchao/" />
+    <cache-path name="cache" path="." />
+    <external-path name="external" path="." />
+    <root-path name="root" path="." />
+</paths>

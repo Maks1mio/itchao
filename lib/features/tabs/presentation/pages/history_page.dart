@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/itch_colors.dart';
 import '../../../../core/utils/time_ago.dart';
 import '../../browsing_history_controller.dart';
+import '../../game_page_url.dart';
 import '../../tabs_controller.dart';
 
 class HistoryPage extends ConsumerWidget {
@@ -74,8 +75,9 @@ class HistoryPage extends ConsumerWidget {
                       ),
                     ),
                     onTap: () {
-                      ref.read(tabsControllerProvider.notifier).openTab(
-                        entry.url,
+                      final tabUrl = itchGameTabUrlFromHistory(entry.url) ?? entry.url;
+                      ref.read(tabsControllerProvider.notifier).navigateActiveTab(
+                        tabUrl,
                         label: entry.label,
                       );
                     },
@@ -100,6 +102,9 @@ class HistoryPage extends ConsumerWidget {
     }
     if (url.startsWith('itch://featured')) {
       return Icons.public;
+    }
+    if (url.startsWith('itch://games') || itchGameTabUrlFromHistory(url) != null) {
+      return Icons.sports_esports_outlined;
     }
     return Icons.history;
   }

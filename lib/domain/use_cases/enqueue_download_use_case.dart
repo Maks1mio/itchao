@@ -1,3 +1,4 @@
+import '../../data/models.dart';
 import '../../features/downloads/downloads_controller.dart';
 
 class EnqueueDownloadUseCase {
@@ -8,7 +9,14 @@ class EnqueueDownloadUseCase {
   Future<void> call({
     required int gameId,
     required String gameTitle,
+    DownloadReason reason = DownloadReason.install,
+    String? coverUrl,
   }) {
-    return _downloadsController.enqueue(gameId, gameTitle);
+    return _downloadsController.enqueue(
+      gameId,
+      gameTitle,
+      reason: reason,
+      coverUrl: coverUrl,
+    );
   }
 }

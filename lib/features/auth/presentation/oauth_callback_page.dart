@@ -31,7 +31,7 @@ class _OAuthCallbackPageState extends ConsumerState<OAuthCallbackPage> {
         return;
       }
       if (profile != null) {
-        context.go('/tabs');
+        context.go('/api-keys-setup');
       } else {
         context.go('/gate');
       }

@@ -69,7 +69,7 @@ class _OAuthWebLoginPageState extends ConsumerState<OAuthWebLoginPage> {
         if (!mounted) {
           return;
         }
-        context.go('/tabs');
+        context.go('/api-keys-setup');
       } else {
         setState(() => _handlingCallback = false);
         ScaffoldMessenger.of(context).showSnackBar(

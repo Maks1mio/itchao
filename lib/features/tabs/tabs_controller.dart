@@ -26,6 +26,8 @@ class TabsController extends AsyncNotifier<TabsState> {
   static const _initialTabId = 'initial-tab';
   final Map<String, List<_TabNavFrame>> _tabHistories = {};
   var _persistenceReady = false;
+  Timer? _persistDebounce;
+  TabsState? _lastFullPersistSnapshot;
 
   @override
   Future<TabsState> build() async {
@@ -38,10 +40,12 @@ class TabsController extends AsyncNotifier<TabsState> {
         ];
       }
       _persistenceReady = true;
+      _lastFullPersistSnapshot = stored.state;
       return stored.state;
     }
     _bootstrapDefault();
     _persistenceReady = true;
+    _lastFullPersistSnapshot = state.value!;
     return state.value!;
   }
 
@@ -65,17 +69,49 @@ class TabsController extends AsyncNotifier<TabsState> {
 
   void _commit(TabsState next) {
     state = AsyncData(next);
-    if (_persistenceReady) {
-      Future.microtask(() => _persist(next));
+    if (!_persistenceReady) {
+      return;
     }
+    if (_onlyActiveTabChanged(next)) {
+      _persistDebounce?.cancel();
+      unawaited(TabsPersistence.saveActiveTabId(next.activeTabId));
+      _lastFullPersistSnapshot = _lastFullPersistSnapshot?.copyWith(
+        activeTabId: next.activeTabId,
+      );
+      return;
+    }
+    _lastFullPersistSnapshot = next;
+    _persistDebounce?.cancel();
+    _persistDebounce = Timer(const Duration(milliseconds: 500), () {
+      _persistFull(next);
+    });
   }
 
-  Future<void> _persist(TabsState next) async {
+  bool _onlyActiveTabChanged(TabsState next) {
+    final prev = _lastFullPersistSnapshot;
+    if (prev == null) {
+      return false;
+    }
+    if (prev.openTabs.length != next.openTabs.length) {
+      return false;
+    }
+    for (var i = 0; i < prev.openTabs.length; i++) {
+      final a = prev.openTabs[i];
+      final b = next.openTabs[i];
+      if (a.id != b.id || a.url != b.url || a.label != b.label) {
+        return false;
+      }
+    }
+    return prev.activeTabId != next.activeTabId;
+  }
+
+  Future<void> _persistFull(TabsState next) async {
     final histories = {
       for (final entry in _tabHistories.entries)
         entry.key: [for (final frame in entry.value) frame.toPersisted()],
     };
     await TabsPersistence.save(state: next, histories: histories);
+    _lastFullPersistSnapshot = next;
   }
 
   void _recordBrowsing(String url, {String? label}) {
@@ -237,5 +273,25 @@ class TabsController extends AsyncNotifier<TabsState> {
 
   void newTab() {
     openTab('itch://new-tab');
+  }
+
+  /// Закрыть все вкладки и оставить одну «Новая вкладка».
+  void closeAllTabs() {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+    final tabId = 'tab-${DateTime.now().millisecondsSinceEpoch}';
+    const url = 'itch://new-tab';
+    const label = 'Новая вкладка';
+    _tabHistories
+      ..clear()
+      ..[tabId] = [_TabNavFrame(url: url, label: label)];
+    _commit(
+      TabsState(
+        openTabs: [TabEntry(id: tabId, url: url, label: label)],
+        activeTabId: tabId,
+      ),
+    );
   }
 }
