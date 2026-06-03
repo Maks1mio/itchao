@@ -2,11 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../../core/theme/itch_colors.dart';
 import '../../../collections/collections_controller.dart';
-import '../../tabs_controller.dart';
 import '../tab_chrome_provider.dart';
-import 'itch_browser_page.dart';
 import '../widgets/collection_stripe.dart';
 import '../widgets/tab_chrome_toolbars.dart';
 
@@ -28,19 +25,12 @@ class _CollectionsPageState extends ConsumerState<CollectionsPage> {
 
   @override
   void dispose() {
-    final chrome = ref.read(tabChromeProvider.notifier);
     _searchController.dispose();
     super.dispose();
-    Future.microtask(() => chrome.clearPageMenu());
   }
 
   void _bindChrome() {
     if (!mounted) {
-      return;
-    }
-    final mode = ref.read(collectionsControllerProvider).valueOrNull?.mode;
-    if (mode == CollectionsDisplayMode.webFallback) {
-      ref.read(tabChromeProvider.notifier).clearPageMenu(showTitle: false);
       return;
     }
     ref.read(tabChromeProvider.notifier).setAppBarContent(
@@ -53,34 +43,8 @@ class _CollectionsPageState extends ConsumerState<CollectionsPage> {
     final collections = ref.watch(collectionsControllerProvider);
     final controller = ref.read(collectionsControllerProvider.notifier);
 
-    ref.listen(collectionsControllerProvider.select((s) => s.valueOrNull?.mode), (prev, next) {
-      if (prev != next) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => _bindChrome());
-      }
-    });
-
     return collections.when(
       data: (state) {
-        if (state.mode == CollectionsDisplayMode.webFallback) {
-          return Column(
-            children: [
-              if (state.hint != null)
-                Material(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Text(state.hint!, style: const TextStyle(fontSize: 13)),
-                  ),
-                ),
-              const Expanded(
-                child: ItchBrowserPage(
-                  initialUrl: 'https://itch.io/my-collections',
-                  belowHubChrome: true,
-                ),
-              ),
-            ],
-          );
-        }
         if (state.items.isEmpty) {
           return Center(
             child: Padding(
@@ -107,38 +71,6 @@ class _CollectionsPageState extends ConsumerState<CollectionsPage> {
           onRefresh: controller.refresh,
           child: ListView(
             children: [
-              if (state.limitedAccess && state.hint != null)
-                Material(
-                  color: ItchColors.item,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text(state.hint!, style: const TextStyle(fontSize: 13)),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            FilledButton.tonal(
-                              onPressed: () => context.push('/settings'),
-                              child: const Text('Добавить API key'),
-                            ),
-                            const SizedBox(width: 8),
-                            TextButton(
-                              onPressed: () {
-                                ref.read(tabsControllerProvider.notifier).navigateActiveTab(
-                                  'https://itch.io/my-collections',
-                                  label: 'Коллекции на itch.io',
-                                );
-                              },
-                              child: const Text('На сайте'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
               if (state.loadingPreviews && state.pendingPreviewCount > 0)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),

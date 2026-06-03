@@ -69,7 +69,7 @@ class CollectionStripe extends ConsumerWidget {
                     ),
                   )
                 : item.previewGames.isEmpty
-                ? _LimitedAccessPreview(
+                ? _EmptyPreviewStripe(
                     gamesCount: coll.gamesCount,
                     onOpen: () {
                       ref.read(tabsControllerProvider.notifier).navigateActiveTab(
@@ -120,8 +120,8 @@ class CollectionStripe extends ConsumerWidget {
   }
 }
 
-class _LimitedAccessPreview extends StatelessWidget {
-  const _LimitedAccessPreview({required this.gamesCount, required this.onOpen});
+class _EmptyPreviewStripe extends StatelessWidget {
+  const _EmptyPreviewStripe({required this.gamesCount, required this.onOpen});
 
   final int gamesCount;
   final VoidCallback onOpen;
@@ -137,21 +137,18 @@ class _LimitedAccessPreview extends StatelessWidget {
           onTap: onOpen,
           borderRadius: BorderRadius.circular(8),
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
             child: Row(
               children: [
-                Icon(
-                  Icons.lock_outline,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    '${formatProjectsCountRu(gamesCount)} — обложки не подгрузились. «Показать все» откроет список в приложении',
+                    gamesCount > 0
+                        ? '${formatProjectsCountRu(gamesCount)} — открыть коллекцию'
+                        : 'Пустая коллекция',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                 ),
-                const Text('Открыть →'),
+                const Text('Показать все →'),
               ],
             ),
           ),

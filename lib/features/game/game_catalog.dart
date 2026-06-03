@@ -4,11 +4,17 @@ import '../../data/game_web_url.dart';
 import '../../data/models.dart';
 import '../collections/collections_controller.dart';
 import '../library/library_controller.dart';
+import 'game_catalog_cache.dart';
 
-/// Ищет игру по id в кэше библиотеки и коллекций (данные API).
+/// Ищет игру по id в кэше API, библиотеке и коллекциях.
 LibraryGame? findLibraryGameById(Ref ref, int gameId) {
   if (gameId <= 0) {
     return null;
+  }
+  ref.watch(gameCatalogCacheProvider);
+  final fromCatalog = ref.read(gameCatalogCacheProvider)[gameId];
+  if (fromCatalog != null) {
+    return fromCatalog;
   }
   final library = ref.read(libraryControllerProvider).valueOrNull;
   if (library != null) {

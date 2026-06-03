@@ -5,6 +5,7 @@ import '../../../install/game_install_status_provider.dart';
 import '../../../../core/utils/itch_cached_network_image.dart';
 import '../../../../data/game_page_models.dart';
 import '../../../../data/game_page_theme.dart';
+import 'game_screenshot_gallery.dart';
 import 'itch_formatted_description.dart';
 
 /// Страница игры в стиле itch.io: фон `.wrapper` скроллится вместе с контентом.
@@ -86,11 +87,11 @@ class ItchGameDetailView extends StatelessWidget {
                       ],
                     ),
                   ),
-                  if (detail.screenshots.length > 1)
+                  if (detail.screenshots.isNotEmpty)
                     Container(
                       color: panelBg,
-                      padding: const EdgeInsets.only(top: 12),
-                      child: _ScreenshotCarousel(
+                      padding: const EdgeInsets.only(top: 12, bottom: 4),
+                      child: GameScreenshotStrip(
                         items: detail.screenshots,
                         titleColor: textColor,
                       ),
@@ -335,51 +336,6 @@ class _PrimaryActionButton extends StatelessWidget {
       );
     }
     return child;
-  }
-}
-
-class _ScreenshotCarousel extends StatelessWidget {
-  const _ScreenshotCarousel({required this.items, required this.titleColor});
-
-  final List<GameMediaItem> items;
-  final Color titleColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Text(
-            'Скриншоты',
-            style: TextStyle(color: titleColor, fontSize: 15, fontWeight: FontWeight.w600),
-          ),
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          height: 160,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: items.length,
-            separatorBuilder: (_, _) => const SizedBox(width: 8),
-            itemBuilder: (context, index) {
-              final url = items[index].url;
-              return ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: ItchCachedNetworkImage(
-                  url: url,
-                  width: 240,
-                  height: 160,
-                  fit: BoxFit.cover,
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
   }
 }
 

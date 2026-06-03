@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models.dart';
 import '../../data/repositories/library_repository.dart';
 import '../auth/auth_controller.dart';
+import '../game/game_catalog_cache.dart';
 import '../install/installed_games_controller.dart';
 
 final libraryControllerProvider =
@@ -21,7 +22,7 @@ class LibraryController extends AsyncNotifier<List<LibraryGame>> {
     final repository = LibraryRepository(ref.read(itchApiClientProvider));
     final games = await repository.fetchLibrary(apiKey);
     final installed = ref.read(installedGamesProvider);
-    return games
+    final merged = games
         .map(
           (g) => installed.containsKey(g.id)
               ? LibraryGame(
@@ -37,6 +38,8 @@ class LibraryController extends AsyncNotifier<List<LibraryGame>> {
               : g,
         )
         .toList();
+    ref.read(gameCatalogCacheProvider.notifier).putAll(merged);
+    return merged;
   }
 
   Future<void> refresh() async {

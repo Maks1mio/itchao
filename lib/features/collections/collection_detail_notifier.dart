@@ -1,9 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/debug/butler_debug_log.dart';
-import '../../data/api_exception.dart';
 import '../../data/models.dart';
 import '../auth/auth_controller.dart';
+import '../game/game_catalog_cache.dart';
+import 'collections_api_token.dart';
 import 'collections_controller.dart';
 
 class CollectionDetailState {
@@ -12,159 +13,98 @@ class CollectionDetailState {
     this.expectedCount = 0,
     this.isLoadingMore = false,
     this.hasMore = false,
-    this.source = CollectionGamesSource.none,
   });
 
   final List<LibraryGame> games;
   final int expectedCount;
   final bool isLoadingMore;
   final bool hasMore;
-  final CollectionGamesSource source;
 
   CollectionDetailState copyWith({
     List<LibraryGame>? games,
     int? expectedCount,
     bool? isLoadingMore,
     bool? hasMore,
-    CollectionGamesSource? source,
   }) {
     return CollectionDetailState(
       games: games ?? this.games,
       expectedCount: expectedCount ?? this.expectedCount,
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       hasMore: hasMore ?? this.hasMore,
-      source: source ?? this.source,
     );
   }
 }
-
-enum CollectionGamesSource { none, api, web }
 
 final collectionDetailProvider =
     AsyncNotifierProvider.family<CollectionDetailNotifier, CollectionDetailState, int>(
       CollectionDetailNotifier.new,
     );
 
+/// Игры коллекции через API с постраничной подгрузкой (itch API: per_page до 100).
 class CollectionDetailNotifier extends FamilyAsyncNotifier<CollectionDetailState, int> {
-  static const _pageSize = 30;
+  static const pageSize = 100;
 
   int get _collectionId => arg;
 
   int _apiPage = 0;
-  int _webPage = 0;
-  String? _webPath;
-  bool _useApi = false;
   bool _fetchInFlight = false;
 
   @override
   Future<CollectionDetailState> build(int collectionId) async {
     _apiPage = 0;
-    _webPage = 0;
-    _webPath = null;
-    _useApi = false;
     _fetchInFlight = false;
 
-    final expected = _expectedGamesCount(collectionId);
+    final expected = await _resolveExpectedCount(collectionId);
     final cached =
         ref.read(collectionsControllerProvider.notifier).cachedGamesFor(collectionId) ??
         const <LibraryGame>[];
 
     var games = List<LibraryGame>.from(cached);
-    var source = CollectionGamesSource.none;
-    var hasMore = false;
 
-    final token = await ref.read(authControllerProvider.notifier).readApiKey();
+    final token = await readCollectionsApiToken(ref);
     if (token == null || token.isEmpty) {
       return CollectionDetailState(games: games, expectedCount: expected, hasMore: false);
     }
 
-    final fullToken = await ref.read(authControllerProvider.notifier).readFullApiKey();
-    final client = ref.read(itchApiClientProvider);
+    butlerRcall('Fetch.Collection.Games detail (id: $collectionId, page: 1, expected: $expected)');
 
-    butlerRcall('Collection detail load (id: $collectionId, expected: $expected)');
+    final batch = await ref.read(itchApiClientProvider).fetchCollectionGames(
+      token: token,
+      collectionId: collectionId,
+      page: 1,
+      perPage: pageSize,
+    );
 
-    try {
-      final batch = await client.fetchCollectionGames(
-        token: token,
-        fullAccessToken: fullToken,
-        collectionId: collectionId,
-        page: 1,
-        perPage: _pageSize,
-      );
-      if (batch.isNotEmpty) {
-        _useApi = true;
-        _apiPage = 1;
-        final merged = _merge(games, batch);
-        games = merged.games;
-        source = CollectionGamesSource.api;
-        hasMore = _shouldLoadMore(
-          added: merged.added,
-          total: games.length,
-          expected: expected,
-          batchSize: batch.length,
-          htmlHasNext: false,
-        );
-        butlerRcall('Collection API page 1: +${merged.added} (total ${games.length})');
-      }
-    } on ApiException catch (error) {
-      if (!error.isCollectionViewDenied) {
-        rethrow;
-      }
-      butlerRcall('Collection API denied → HTML pages');
-    }
+    final merged = _merge(games, batch);
+    games = merged.games;
+    _apiPage = 1;
 
-    if (!_useApi) {
-      final page = await ref.read(collectionWebFetcherProvider).fetchGamesPage(
-        collectionId: collectionId,
-        page: 1,
-      );
-      _webPath = page.collectionPath;
-      _webPage = 1;
-      if (page.games.isNotEmpty) {
-        final merged = _merge(games, page.games);
-        games = merged.games;
-        source = CollectionGamesSource.web;
-        hasMore = _shouldLoadMore(
-          added: merged.added,
-          total: games.length,
-          expected: expected,
-          batchSize: page.games.length,
-          htmlHasNext: page.hasNextPage,
-        );
-        butlerRcall(
-          'Collection HTML page 1: +${merged.added} (total ${games.length}, path: ${_webPath ?? "?"})',
-        );
-      }
-    }
+    final hasMore = _hasMoreAfterBatch(
+      batchSize: batch.length,
+      added: merged.added,
+      total: games.length,
+      expected: expected,
+    );
 
-    while (hasMore) {
-      final page = await _fetchNextPage();
-      final merged = _merge(games, page.games);
-      games = merged.games;
-      hasMore = _shouldLoadMore(
-        added: merged.added,
-        total: games.length,
-        expected: expected,
-        batchSize: page.games.length,
-        htmlHasNext: page.hasMore,
-      );
-      if (!hasMore) {
-        butlerRcall('Collection load complete: ${games.length} games');
-      }
-    }
+    butlerRcall('Collection page 1: ${games.length}/$expected games, hasMore: $hasMore');
+
+    ref.read(gameCatalogCacheProvider.notifier).putAll(games);
 
     return CollectionDetailState(
       games: games,
       expectedCount: expected,
-      hasMore: false,
-      source: source,
+      hasMore: hasMore,
     );
   }
 
-  /// Догрузка при скролле вниз (только если ещё есть что грузить).
   Future<void> loadMore() async {
     final current = state.valueOrNull;
     if (current == null || _fetchInFlight || current.isLoadingMore || !current.hasMore) {
+      return;
+    }
+
+    final token = await readCollectionsApiToken(ref);
+    if (token == null || token.isEmpty) {
       return;
     }
 
@@ -172,21 +112,32 @@ class CollectionDetailNotifier extends FamilyAsyncNotifier<CollectionDetailState
     state = AsyncData(current.copyWith(isLoadingMore: true));
 
     try {
-      final page = await _fetchNextPage();
-      final merged = _merge(current.games, page.games);
-      final hasMore = _shouldLoadMore(
+      final nextPage = _apiPage + 1;
+      final batch = await ref.read(itchApiClientProvider).fetchCollectionGames(
+        token: token,
+        collectionId: _collectionId,
+        page: nextPage,
+        perPage: pageSize,
+      );
+      _apiPage = nextPage;
+
+      final merged = _merge(current.games, batch);
+      var hasMore = _hasMoreAfterBatch(
+        batchSize: batch.length,
         added: merged.added,
         total: merged.games.length,
         expected: current.expectedCount,
-        batchSize: page.games.length,
-        htmlHasNext: page.hasMore,
+      );
+      if (merged.added == 0 && batch.isNotEmpty) {
+        butlerRcall('Collection page $nextPage: no new games, stop pagination');
+        hasMore = false;
+      }
+
+      butlerRcall(
+        'Collection page $nextPage: +${merged.added} (total ${merged.games.length}/${current.expectedCount}, hasMore: $hasMore)',
       );
 
-      if (merged.added > 0) {
-        butlerRcall('Collection +${merged.added} (total ${merged.games.length})');
-      } else {
-        butlerRcall('Collection end of list (${merged.games.length} games)');
-      }
+      ref.read(gameCatalogCacheProvider.notifier).putAll(merged.games);
 
       state = AsyncData(
         current.copyWith(
@@ -203,46 +154,46 @@ class CollectionDetailNotifier extends FamilyAsyncNotifier<CollectionDetailState
     }
   }
 
-  Future<({List<LibraryGame> games, bool hasMore})> _fetchNextPage() async {
-    final token = await ref.read(authControllerProvider.notifier).readApiKey();
-    if (token == null || token.isEmpty) {
-      return (games: const <LibraryGame>[], hasMore: false);
+  /// Продолжаем, пока не набрали [expected] или API вернул пустую страницу.
+  bool _hasMoreAfterBatch({
+    required int batchSize,
+    required int added,
+    required int total,
+    required int expected,
+  }) {
+    if (batchSize == 0) {
+      return false;
     }
-
-    final expected = state.valueOrNull?.expectedCount ?? _expectedGamesCount(_collectionId);
-
-    if (_useApi) {
-      final nextPage = _apiPage + 1;
-      if (_isPastMaxPage(nextPage, expected)) {
-        return (games: const <LibraryGame>[], hasMore: false);
-      }
-      final fullToken = await ref.read(authControllerProvider.notifier).readFullApiKey();
-      final batch = await ref.read(itchApiClientProvider).fetchCollectionGames(
-        token: token,
-        fullAccessToken: fullToken,
-        collectionId: _collectionId,
-        page: nextPage,
-        perPage: _pageSize,
-      );
-      _apiPage = nextPage;
-      return (games: batch, hasMore: batch.isNotEmpty);
+    if (expected > 0) {
+      return total < expected;
     }
-
-    final nextPage = _webPage + 1;
-    if (_isPastMaxPage(nextPage, expected)) {
-      return (games: const <LibraryGame>[], hasMore: false);
-    }
-    final page = await ref.read(collectionWebFetcherProvider).fetchGamesPage(
-      collectionId: _collectionId,
-      page: nextPage,
-      collectionPath: _webPath,
-    );
-    _webPage = nextPage;
-    _webPath = page.collectionPath ?? _webPath;
-    return (games: page.games, hasMore: page.hasNextPage);
+    return added > 0 || batchSize >= pageSize;
   }
 
-  int _expectedGamesCount(int collectionId) {
+  Future<int> _resolveExpectedCount(int collectionId) async {
+    final fromCache = _expectedGamesCountFromList(collectionId);
+    if (fromCache > 0) {
+      return fromCache;
+    }
+
+    final token = await readCollectionsApiToken(ref);
+    if (token == null || token.isEmpty) {
+      return 0;
+    }
+
+    try {
+      final collection = await ref.read(itchApiClientProvider).findCollectionById(
+        token: token,
+        collectionId: collectionId,
+      );
+      return collection?.gamesCount ?? 0;
+    } catch (error) {
+      butlerRcall('Fetch collection meta failed ($collectionId): $error');
+      return 0;
+    }
+  }
+
+  int _expectedGamesCountFromList(int collectionId) {
     final collections = ref.read(collectionsControllerProvider).valueOrNull?.items ?? const [];
     for (final item in collections) {
       if (item.collection.id == collectionId) {
@@ -250,32 +201,6 @@ class CollectionDetailNotifier extends FamilyAsyncNotifier<CollectionDetailState
       }
     }
     return 0;
-  }
-
-  bool _isPastMaxPage(int page, int expected) {
-    if (expected <= 0) {
-      return page > 32;
-    }
-    return page > (expected + _pageSize - 1) ~/ _pageSize + 1;
-  }
-
-  bool _shouldLoadMore({
-    required int added,
-    required int total,
-    required int expected,
-    required int batchSize,
-    required bool htmlHasNext,
-  }) {
-    if (added == 0) {
-      return false;
-    }
-    if (expected > 0 && total >= expected) {
-      return false;
-    }
-    if (_useApi) {
-      return batchSize >= _pageSize && (expected == 0 || total < expected);
-    }
-    return htmlHasNext && (expected == 0 || total < expected);
   }
 
   ({List<LibraryGame> games, int added}) _merge(List<LibraryGame> existing, List<LibraryGame> batch) {

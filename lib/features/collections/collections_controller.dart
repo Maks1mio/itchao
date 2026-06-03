@@ -4,31 +4,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/debug/butler_debug_log.dart';
 import '../../data/api_exception.dart';
-import '../../data/collection_web_fetcher.dart';
 import '../../data/itch_api_client.dart';
 import '../../data/models.dart';
 import '../auth/auth_controller.dart';
+import '../game/game_catalog_cache.dart';
+import 'collections_api_token.dart';
 
 enum CollectionSortField { title, updatedAt }
-
-enum CollectionsDisplayMode { native, webFallback }
 
 class CollectionsState {
   const CollectionsState({
     required this.items,
-    required this.mode,
-    this.limitedAccess = false,
     this.loadingPreviews = false,
     this.pendingPreviewCount = 0,
-    this.hint,
   });
 
   final List<CollectionWithPreview> items;
-  final CollectionsDisplayMode mode;
-  final bool limitedAccess;
   final bool loadingPreviews;
   final int pendingPreviewCount;
-  final String? hint;
 }
 
 final collectionsControllerProvider =
@@ -36,10 +29,11 @@ final collectionsControllerProvider =
       CollectionsController.new,
     );
 
+/// Список коллекций + превью игр через API (`profile/collections`, `collection-games`).
 class CollectionsController extends AsyncNotifier<CollectionsState> {
-  static const _previewLimit = 8;
-  static const _maxConcurrent = 3;
-  static const _retryRounds = 2;
+  /// Как itch desktop `GameStripe` — limit 12.
+  static const previewLimit = 12;
+  static const _maxConcurrent = 4;
 
   CollectionSortField sortField = CollectionSortField.updatedAt;
   var sortReverse = true;
@@ -59,35 +53,23 @@ class CollectionsController extends AsyncNotifier<CollectionsState> {
 
   Future<CollectionsState> _load() async {
     final generation = ++_loadGeneration;
-    final token = await ref.read(authControllerProvider.notifier).readApiKey();
+    final token = await readCollectionsApiToken(ref);
     if (token == null || token.isEmpty) {
-      return const CollectionsState(items: [], mode: CollectionsDisplayMode.native);
+      return const CollectionsState(items: []);
     }
-    final fullToken = await ref.read(authControllerProvider.notifier).readFullApiKey();
-    final hasFullKey = fullToken != null && fullToken.isNotEmpty;
-    final client = ref.read(itchApiClientProvider);
-    final webFetcher = ref.read(collectionWebFetcherProvider);
 
     final profileId = ref.read(authControllerProvider).valueOrNull?.id;
     butlerRcall(
       profileId != null && profileId > 0
-          ? 'Calling Fetch.ProfileCollections (profileId: $profileId)'
-          : 'Calling Fetch.ProfileCollections → GET /profile/collections',
+          ? 'Fetch.ProfileCollections (profileId: $profileId)'
+          : 'Fetch.ProfileCollections',
     );
 
-    List<ItchCollection> collections;
-    try {
-      collections = await client.fetchCollections(token: token);
-    } catch (_) {
-      return const CollectionsState(
-        items: [],
-        mode: CollectionsDisplayMode.webFallback,
-        hint: 'Не удалось загрузить коллекции через API. Открываем itch.io в браузере.',
-      );
-    }
+    final client = ref.read(itchApiClientProvider);
+    final collections = await client.fetchCollections(token: token);
 
     if (generation != _loadGeneration) {
-      return state.value ?? const CollectionsState(items: [], mode: CollectionsDisplayMode.native);
+      return state.value ?? const CollectionsState(items: []);
     }
 
     _gamesByCollectionId.clear();
@@ -106,84 +88,27 @@ class CollectionsController extends AsyncNotifier<CollectionsState> {
       generation: generation,
       collections: collections,
       token: token,
-      fullToken: fullToken,
-      hasFullKey: hasFullKey,
       client: client,
-      webFetcher: webFetcher,
       profileId: profileId,
     );
 
     if (generation != _loadGeneration) {
-      return state.value ?? const CollectionsState(items: [], mode: CollectionsDisplayMode.native);
+      return state.value ?? const CollectionsState(items: []);
     }
 
-    return _finalState(hasFullKey: hasFullKey);
+    return CollectionsState(
+      items: _applyFilters(_cached),
+      loadingPreviews: false,
+      pendingPreviewCount: 0,
+    );
   }
 
   Future<void> _loadAllPreviews({
     required int generation,
     required List<ItchCollection> collections,
     required String token,
-    required String? fullToken,
-    required bool hasFullKey,
     required ItchApiClient client,
-    required CollectionWebFetcher webFetcher,
     required int? profileId,
-  }) async {
-    await _runPreviewPool(
-      generation: generation,
-      collections: collections,
-      token: token,
-      fullToken: fullToken,
-      hasFullKey: hasFullKey,
-      client: client,
-      webFetcher: webFetcher,
-      profileId: profileId,
-    );
-
-    for (var round = 0; round < _retryRounds; round++) {
-      if (generation != _loadGeneration) {
-        return;
-      }
-      final missing = _cached
-          .where((e) => !e.previewLoading && e.previewGames.isEmpty)
-          .map((e) => e.collection)
-          .toList();
-      if (missing.isEmpty) {
-        break;
-      }
-      await Future.delayed(Duration(milliseconds: 800 * (round + 1)));
-      if (generation != _loadGeneration) {
-        return;
-      }
-      for (final c in missing) {
-        _setPreviewLoading(c.id, loading: true);
-      }
-      _publish(generation: generation);
-      await _runPreviewPool(
-        generation: generation,
-        collections: missing,
-        token: token,
-        fullToken: fullToken,
-        hasFullKey: hasFullKey,
-        client: client,
-        webFetcher: webFetcher,
-        profileId: profileId,
-        isRetry: true,
-      );
-    }
-  }
-
-  Future<void> _runPreviewPool({
-    required int generation,
-    required List<ItchCollection> collections,
-    required String token,
-    required String? fullToken,
-    required bool hasFullKey,
-    required ItchApiClient client,
-    required CollectionWebFetcher webFetcher,
-    required int? profileId,
-    bool isRetry = false,
   }) async {
     var index = 0;
     final workers = List.generate(_maxConcurrent.clamp(1, collections.length), (_) async {
@@ -193,17 +118,13 @@ class CollectionsController extends AsyncNotifier<CollectionsState> {
         }
         final collection = collections[index++];
         butlerRcall(
-          'Calling Fetch.Collection.Games (collectionId: ${collection.id}, limit: $_previewLimit'
-          '${isRetry ? ', retry' : ''}'
+          'Fetch.Collection.Games (collectionId: ${collection.id}, limit: $previewLimit'
           '${profileId != null && profileId > 0 ? ', profileId: $profileId' : ''})',
         );
         final games = await _fetchPreviewGames(
-          collection: collection,
           token: token,
-          fullToken: fullToken,
-          hasFullKey: hasFullKey,
+          collectionId: collection.id,
           client: client,
-          webFetcher: webFetcher,
         );
         if (generation != _loadGeneration) {
           return;
@@ -216,45 +137,28 @@ class CollectionsController extends AsyncNotifier<CollectionsState> {
   }
 
   Future<List<LibraryGame>> _fetchPreviewGames({
-    required ItchCollection collection,
     required String token,
-    required String? fullToken,
-    required bool hasFullKey,
+    required int collectionId,
     required ItchApiClient client,
-    required CollectionWebFetcher webFetcher,
   }) async {
     try {
-      if (hasFullKey) {
-        try {
-          final games = await client.fetchCollectionGames(
-            token: token,
-            fullAccessToken: fullToken,
-            collectionId: collection.id,
-            perPage: _previewLimit,
-          );
-          if (games.isNotEmpty) {
-            return games;
-          }
-        } on ApiException catch (error) {
-          if (!error.isCollectionViewDenied) {
-            rethrow;
-          }
-        }
-      }
-      butlerRcall(
-        'Fetch.Collection.Games fallback → HTML itch.io/c/${collection.id}/hello',
+      return await client.fetchCollectionGames(
+        token: token,
+        collectionId: collectionId,
+        perPage: previewLimit,
       );
-      return await webFetcher.fetchPreviewGames(
-        collectionId: collection.id,
-        limit: _previewLimit,
-      );
-    } catch (_) {
+    } on ApiException catch (error) {
+      butlerRcall('Fetch.Collection.Games failed ($collectionId): $error');
+      return const [];
+    } catch (error) {
+      butlerRcall('Fetch.Collection.Games error ($collectionId): $error');
       return const [];
     }
   }
 
   void _applyPreviewResult(int collectionId, List<LibraryGame> games) {
     _gamesByCollectionId[collectionId] = games;
+    ref.read(gameCatalogCacheProvider.notifier).putAll(games);
     _cached = [
       for (final item in _cached)
         if (item.collection.id == collectionId)
@@ -268,53 +172,22 @@ class CollectionsController extends AsyncNotifier<CollectionsState> {
     ];
   }
 
-  void _setPreviewLoading(int collectionId, {required bool loading}) {
-    _cached = [
-      for (final item in _cached)
-        if (item.collection.id == collectionId)
-          CollectionWithPreview(
-            collection: item.collection,
-            previewGames: item.previewGames,
-            previewLoading: loading,
-          )
-        else
-          item,
-    ];
-  }
-
   void _publish({required int generation}) {
     if (generation != _loadGeneration) {
       return;
     }
-    final current = state.value;
-    state = AsyncData(
-      CollectionsState(
-        items: _applyFilters(_cached),
-        mode: current?.mode ?? CollectionsDisplayMode.native,
-        limitedAccess: current?.limitedAccess ?? false,
-        loadingPreviews: _cached.any((e) => e.previewLoading),
-        pendingPreviewCount: _cached.where((e) => e.previewLoading).length,
-        hint: current?.hint,
-      ),
-    );
-  }
-
-  CollectionsState _finalState({required bool hasFullKey}) {
-    final filtered = _applyFilters(_cached);
-    final anyLoaded = filtered.any((item) => item.previewGames.isNotEmpty);
-    final allEmpty = filtered.isNotEmpty && filtered.every((item) => item.previewGames.isEmpty);
-    final limitedAccess = !hasFullKey && allEmpty;
-
-    return CollectionsState(
-      items: filtered,
-      mode: CollectionsDisplayMode.native,
-      limitedAccess: limitedAccess,
-      loadingPreviews: false,
-      pendingPreviewCount: 0,
-      hint: limitedAccess && !anyLoaded
-          ? 'Обложки не загрузились. Войди через WebView на itch.io или добавь полный API key в настройках.'
-          : null,
-    );
+    Future.microtask(() {
+      if (generation != _loadGeneration) {
+        return;
+      }
+      state = AsyncData(
+        CollectionsState(
+          items: _applyFilters(_cached),
+          loadingPreviews: _cached.any((e) => e.previewLoading),
+          pendingPreviewCount: _cached.where((e) => e.previewLoading).length,
+        ),
+      );
+    });
   }
 
   List<CollectionWithPreview> _applyFilters(List<CollectionWithPreview> items) {
@@ -362,11 +235,8 @@ class CollectionsController extends AsyncNotifier<CollectionsState> {
     state = AsyncData(
       CollectionsState(
         items: _applyFilters(_cached),
-        mode: current.mode,
-        limitedAccess: current.limitedAccess,
         loadingPreviews: _cached.any((e) => e.previewLoading),
         pendingPreviewCount: _cached.where((e) => e.previewLoading).length,
-        hint: current.hint,
       ),
     );
   }
@@ -389,13 +259,9 @@ class CollectionsController extends AsyncNotifier<CollectionsState> {
     state = AsyncData(
       CollectionsState(
         items: _applyFilters(_cached),
-        mode: current.mode,
-        limitedAccess: current.limitedAccess,
         loadingPreviews: _cached.any((e) => e.previewLoading),
         pendingPreviewCount: _cached.where((e) => e.previewLoading).length,
-        hint: current.hint,
       ),
     );
   }
 }
-

@@ -160,6 +160,19 @@ class ItchApiClient {
     return raw.whereType<Map<String, dynamic>>().map(_collectionFromMap).toList();
   }
 
+  Future<ItchCollection?> findCollectionById({
+    required String token,
+    required int collectionId,
+  }) async {
+    final collections = await fetchCollections(token: token);
+    for (final collection in collections) {
+      if (collection.id == collectionId) {
+        return collection;
+      }
+    }
+    return null;
+  }
+
   /// `collection-games` требует unscoped API key (см. Serverside API) или scope `collection:view`.
   Future<bool> probeCollectionGamesAccess({
     required String token,

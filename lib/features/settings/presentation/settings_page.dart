@@ -84,10 +84,9 @@ class SettingsPage extends ConsumerWidget {
               Text('Коллекции (полный доступ)', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               const Text(
-                'OAuth (см. OAuth Applications.md) даёт profile:collections — только список. '
-                'Обложки игр в полосах — endpoint collection-games; на ПК itch ходит через butler '
-                '(полный доступ), в REST API — только unscoped API key (Serverside API). '
-                'Создай ключ на itch.io и вставь ниже.',
+                'Список коллекций — OAuth (profile:collections). Игры в полосах и внутри коллекции — '
+                'REST collection-games (как butler на ПК): нужен полный API key без scope или scope '
+                'collection:view. Создай ключ на itch.io и вставь ниже.',
                 style: TextStyle(fontSize: 13),
               ),
               const SizedBox(height: 8),

@@ -38,7 +38,9 @@ class CollectionsListAppBarTitle extends ConsumerWidget {
                 borderSide: BorderSide.none,
               ),
             ),
-            onChanged: controller.setSearch,
+            onChanged: (value) {
+              Future.microtask(() => controller.setSearch(value));
+            },
           ),
         ),
         const SizedBox(width: 4),
@@ -51,18 +53,20 @@ class CollectionsListAppBarTitle extends ConsumerWidget {
           tooltip: 'Сортировка',
           color: ItchColors.item,
           onSelected: (value) {
-            switch (value) {
-              case 'title_asc':
-                controller.setSort(CollectionSortField.title, reverse: false);
-              case 'title_desc':
-                controller.setSort(CollectionSortField.title, reverse: true);
-              case 'updated_desc':
-                controller.setSort(CollectionSortField.updatedAt, reverse: true);
-              case 'updated_asc':
-                controller.setSort(CollectionSortField.updatedAt, reverse: false);
-              case 'refresh':
-                controller.refresh();
-            }
+            Future.microtask(() {
+              switch (value) {
+                case 'title_asc':
+                  controller.setSort(CollectionSortField.title, reverse: false);
+                case 'title_desc':
+                  controller.setSort(CollectionSortField.title, reverse: true);
+                case 'updated_desc':
+                  controller.setSort(CollectionSortField.updatedAt, reverse: true);
+                case 'updated_asc':
+                  controller.setSort(CollectionSortField.updatedAt, reverse: false);
+                case 'refresh':
+                  controller.refresh();
+              }
+            });
           },
           itemBuilder: (context) => [
             _sortItem(

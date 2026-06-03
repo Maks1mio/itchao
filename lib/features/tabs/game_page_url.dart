@@ -1,10 +1,24 @@
 import '../../data/game_web_url.dart';
 import '../../data/models.dart';
 
-/// Вкладка приложения: нативная страница игры.
+/// Вкладка приложения: нативная страница игры (как `urlForGame` + evolve на ПК).
 String itchGamePageUrl(LibraryGame game) {
-  final label = Uri.encodeQueryComponent(game.title);
-  return 'itch://games/${game.id}?label=$label';
+  final params = <String, String>{
+    'label': game.title,
+  };
+  final storeUrl = GameWebUrl.pick(game.url, null);
+  if (storeUrl != null) {
+    params['url'] = storeUrl;
+  }
+  if (game.coverUrl != null && game.coverUrl!.trim().isNotEmpty) {
+    params['cover'] = game.coverUrl!.trim();
+  }
+  return Uri(
+    scheme: 'itch',
+    host: 'games',
+    pathSegments: ['${game.id}'],
+    queryParameters: params,
+  ).toString();
 }
 
 /// Если в URL есть числовой id игры — вкладка `itch://games/:id`.

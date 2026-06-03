@@ -10,7 +10,7 @@ import '../../data/repositories/game_url_overrides_repository.dart';
 import '../auth/auth_controller.dart';
 import '../install/installed_games_controller.dart';
 import '../library/library_controller.dart';
-import 'game_catalog.dart';
+import 'game_tab_seed.dart';
 
 final gameUrlFixServiceProvider = Provider<GameUrlFixService>((ref) {
   return GameUrlFixService(
@@ -18,7 +18,14 @@ final gameUrlFixServiceProvider = Provider<GameUrlFixService>((ref) {
     overrides: ref.read(gameUrlOverridesRepositoryProvider),
     api: ref.read(itchApiClientProvider),
     resolver: ref.read(gameUrlResolverProvider),
-    readToken: () => ref.read(authControllerProvider.notifier).readApiKey(),
+    readToken: () async {
+      final auth = ref.read(authControllerProvider.notifier);
+      final full = await auth.readFullApiKey();
+      if (full != null && full.isNotEmpty) {
+        return full;
+      }
+      return auth.readApiKey();
+    },
   );
 });
 
@@ -127,7 +134,7 @@ class GameUrlFixService {
     if (installed != null && installed.title.trim().isNotEmpty) {
       return installed.title.trim();
     }
-    final seed = findLibraryGameById(_ref, gameId);
+    final seed = resolveGameSeed(_ref, gameId);
     return seed?.title.trim();
   }
 

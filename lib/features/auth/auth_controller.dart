@@ -2,7 +2,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/web/itch_webview.dart';
-import '../../data/collection_web_fetcher.dart';
 import '../../data/itch_api_client.dart';
 import '../../data/models.dart';
 import '../../data/repositories/auth_repository.dart';
@@ -11,12 +10,6 @@ final itchApiClientProvider = Provider<ItchApiClient>((ref) {
   final client = ItchApiClient();
   ref.onDispose(client.dispose);
   return client;
-});
-
-final collectionWebFetcherProvider = Provider<CollectionWebFetcher>((ref) {
-  final fetcher = CollectionWebFetcher();
-  ref.onDispose(fetcher.dispose);
-  return fetcher;
 });
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {

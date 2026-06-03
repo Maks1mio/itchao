@@ -24,22 +24,27 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
   var _query = '';
   var _loadMoreRequested = false;
   var _subtitle = '';
+  ProviderSubscription<AsyncValue<CollectionDetailState>>? _detailSubscription;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) => _bindChrome());
+    _detailSubscription = ref.listenManual<AsyncValue<CollectionDetailState>>(
+      collectionDetailProvider(widget.collectionId),
+      (prev, next) => _onDetailChanged(next),
+      fireImmediately: true,
+    );
   }
 
   @override
   void dispose() {
-    final chrome = ref.read(tabChromeProvider.notifier);
+    _detailSubscription?.close();
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _searchController.dispose();
     super.dispose();
-    Future.microtask(() => chrome.clearPageMenu());
   }
 
   void _bindChrome() {
@@ -56,47 +61,79 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
     );
   }
 
-  void _updateSubtitle(String subtitle) {
+  void _onDetailChanged(AsyncValue<CollectionDetailState> next) {
+    next.whenData((state) {
+      final total = state.expectedCount > 0 ? state.expectedCount : state.games.length;
+      final subtitle = state.expectedCount > 0 && state.games.length < state.expectedCount
+          ? '${state.games.length} / $total игр'
+          : '$total игр';
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        _applySubtitle(subtitle);
+        if (state.hasMore && !state.isLoadingMore) {
+          _requestLoadMore();
+        }
+      });
+    });
+  }
+
+  void _applySubtitle(String subtitle) {
     if (_subtitle == subtitle) {
       return;
     }
-    _subtitle = subtitle;
+    setState(() => _subtitle = subtitle);
     _bindChrome();
   }
 
-  void _onScroll() {
+  bool _shouldLoadMore() {
     if (!_scrollController.hasClients || _loadMoreRequested) {
-      return;
+      return false;
     }
     final state = ref.read(collectionDetailProvider(widget.collectionId)).valueOrNull;
     if (state == null || !state.hasMore || state.isLoadingMore) {
-      return;
+      return false;
     }
     final position = _scrollController.position;
-    if (position.pixels < position.maxScrollExtent - 320) {
+    if (!position.hasContentDimensions) {
+      return true;
+    }
+    final runway = position.maxScrollExtent - position.pixels;
+    return runway < 480 || position.maxScrollExtent <= 0;
+  }
+
+  void _onScroll() {
+    if (_shouldLoadMore()) {
+      _requestLoadMore();
+    }
+  }
+
+  void _requestLoadMore() {
+    if (_loadMoreRequested) {
       return;
     }
     _loadMoreRequested = true;
-    ref.read(collectionDetailProvider(widget.collectionId).notifier).loadMore().whenComplete(() {
-      if (mounted) {
-        setState(() => _loadMoreRequested = false);
-      }
-    });
+    ref
+        .read(collectionDetailProvider(widget.collectionId).notifier)
+        .loadMore()
+        .whenComplete(() {
+          if (!mounted) {
+            return;
+          }
+          setState(() => _loadMoreRequested = false);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && _shouldLoadMore()) {
+              _requestLoadMore();
+            }
+          });
+        });
   }
 
   @override
   Widget build(BuildContext context) {
     final detail = ref.watch(collectionDetailProvider(widget.collectionId));
-
-    ref.listen(collectionDetailProvider(widget.collectionId), (prev, next) {
-      next.whenData((state) {
-        final total = state.expectedCount > 0 ? state.expectedCount : state.games.length;
-        final subtitle = state.isLoadingMore && state.expectedCount > 0
-            ? '${state.games.length} / $total игр'
-            : '$total игр';
-        _updateSubtitle(subtitle);
-      });
-    });
 
     return detail.when(
       data: (state) => _buildGamesList(context, state),
@@ -120,9 +157,21 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         final cached =
             ref.read(collectionsControllerProvider.notifier).cachedGamesFor(widget.collectionId);
         if (cached != null && cached.isNotEmpty) {
+          final expected = ref
+              .read(collectionsControllerProvider)
+              .valueOrNull
+              ?.items
+              .where((e) => e.collection.id == widget.collectionId)
+              .map((e) => e.collection.gamesCount)
+              .firstOrNull;
           return _buildGamesList(
             context,
-            CollectionDetailState(games: cached, hasMore: true, isLoadingMore: true),
+            CollectionDetailState(
+              games: cached,
+              expectedCount: expected ?? 0,
+              hasMore: true,
+              isLoadingMore: true,
+            ),
           );
         }
         return const Center(
@@ -160,7 +209,7 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
       );
     }
 
-    final showFooter = state.hasMore && state.isLoadingMore;
+    final showFooter = state.hasMore;
 
     return RefreshIndicator(
       onRefresh: () async {
@@ -171,14 +220,19 @@ class _CollectionDetailPageState extends ConsumerState<CollectionDetailPage> {
         controller: _scrollController,
         games: games,
         footer: showFooter
-            ? const Padding(
-                padding: EdgeInsets.symmetric(vertical: 20),
+            ? Padding(
+                padding: const EdgeInsets.symmetric(vertical: 20),
                 child: Center(
-                  child: SizedBox(
-                    width: 28,
-                    height: 28,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+                  child: state.isLoadingMore
+                      ? const SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : TextButton(
+                          onPressed: _requestLoadMore,
+                          child: const Text('Загрузить ещё'),
+                        ),
                 ),
               )
             : null,

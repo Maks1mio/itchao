@@ -6,7 +6,7 @@ import '../../data/models.dart';
 import '../auth/auth_controller.dart';
 import '../collections/collections_controller.dart';
 import '../library/library_controller.dart';
-import 'game_catalog.dart';
+import 'game_tab_seed.dart';
 
 final gamePageFetcherProvider = Provider<GamePageFetcher>((ref) {
   final fetcher = GamePageFetcher();
@@ -17,13 +17,13 @@ final gamePageFetcherProvider = Provider<GamePageFetcher>((ref) {
 final gameSeedProvider = Provider.family<LibraryGame?, int>((ref, gameId) {
   ref.watch(libraryControllerProvider);
   ref.watch(collectionsControllerProvider);
-  return findLibraryGameById(ref, gameId);
+  return resolveGameSeed(ref, gameId);
 });
 
 final gameDetailProvider = FutureProvider.family<GameDetail, int>((ref, gameId) async {
   ref.watch(libraryControllerProvider);
   ref.watch(collectionsControllerProvider);
-  final seed = findLibraryGameById(ref, gameId);
+  final seed = resolveGameSeed(ref, gameId);
   final webUrl = await ref.read(gameUrlResolverProvider).resolve(
     gameId: gameId,
     seed: seed,
@@ -40,7 +40,7 @@ final gameOwnedProvider = FutureProvider.family<bool, int>((ref, gameId) async {
   if (gameId <= 0) {
     return false;
   }
-  final seed = findLibraryGameById(ref, gameId);
+  final seed = resolveGameSeed(ref, gameId);
   if (seed != null) {
     return true;
   }

@@ -28,7 +28,14 @@ final gameUrlResolverProvider = Provider<GameUrlResolver>((ref) {
       ref.watch(installedGamesProvider);
       return ref.read(installedGamesProvider)[gameId]?.storeUrl;
     },
-    readToken: () => ref.read(authControllerProvider.notifier).readApiKey(),
+    readToken: () async {
+      final auth = ref.read(authControllerProvider.notifier);
+      final full = await auth.readFullApiKey();
+      if (full != null && full.isNotEmpty) {
+        return full;
+      }
+      return auth.readApiKey();
+    },
   );
 });
 
