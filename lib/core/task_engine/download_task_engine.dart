@@ -12,21 +12,25 @@ class DownloadTaskEngine {
     required DownloadCancelledCheck isCancelled,
     required void Function(DownloadProgressUpdate update) onProgress,
     required void Function(String message) onFailed,
+    required void Function() onAwaitingInstall,
     required void Function() onCompleted,
   }) async {
     try {
-      await ref.read(gameInstallServiceProvider).installOrUpdate(
+      final result = await ref.read(gameInstallServiceProvider).downloadApkForGame(
         gameId: task.gameId,
         title: task.gameTitle,
         coverUrl: task.coverUrl,
-        reason: task.reason,
         isCancelled: isCancelled,
-        onProgress: (update) => onProgress(update),
+        onProgress: onProgress,
       );
       if (isCancelled()) {
         return;
       }
-      onCompleted();
+      if (result.alreadyInstalled) {
+        onCompleted();
+        return;
+      }
+      onAwaitingInstall();
     } on DownloadCancelledException {
       // Task removed from UI; do not record history or trigger install.
     } catch (error) {

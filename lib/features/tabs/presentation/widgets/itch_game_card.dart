@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,6 +9,7 @@ import '../../../../core/utils/itch_cached_network_image.dart';
 import '../../../../data/models.dart';
 import '../../../../domain/use_cases/launch_game_use_case.dart';
 import '../../../../domain/use_cases/providers.dart';
+import '../../../downloads/downloads_controller.dart';
 import '../../../install/game_install_status_provider.dart';
 import '../../game_page_url.dart';
 import '../../tabs_controller.dart';
@@ -36,7 +39,6 @@ class ItchGameCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final uiState = ref.watch(gameInstallUiStateProvider(game.id));
     if (compact) {
       return SizedBox(
         width: ItchGameCoverSize.stripeWidth,
@@ -67,8 +69,8 @@ class ItchGameCard extends ConsumerWidget {
             ),
           ),
           _InstallIconButton(
-            uiState: uiState,
-            onPressed: () => _onPrimary(context, ref, uiState),
+            gameId: game.id,
+            onPressed: () => _onPrimary(context, ref),
           ),
         ],
       ),
@@ -85,8 +87,8 @@ class ItchGameCard extends ConsumerWidget {
   Future<void> _onPrimary(
     BuildContext context,
     WidgetRef ref,
-    GameInstallUiState uiState,
   ) async {
+    final uiState = ref.read(gameInstallUiStateProvider(game.id));
     if (uiState.action == GamePrimaryAction.play) {
       try {
         await ref.read(launchGameUseCaseProvider).call(
@@ -105,6 +107,28 @@ class ItchGameCard extends ConsumerWidget {
     }
     if (uiState.action == GamePrimaryAction.downloading) {
       context.push('/downloads');
+      return;
+    }
+    final pendingInstall = ref.read(downloadsControllerProvider).where(
+      (task) =>
+          task.gameId == game.id &&
+          (task.status == DownloadStatus.awaitingInstall ||
+              task.status == DownloadStatus.installing),
+    ).firstOrNull;
+    if (pendingInstall != null) {
+      if (pendingInstall.status == DownloadStatus.installing) {
+        context.push('/downloads');
+        return;
+      }
+      try {
+        await ref.read(downloadsControllerProvider.notifier).beginInstall(pendingInstall.id);
+      } catch (e) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('$e')),
+          );
+        }
+      }
       return;
     }
     final reason = uiState.action == GamePrimaryAction.update
@@ -186,15 +210,18 @@ class _GameInfo extends StatelessWidget {
   }
 }
 
-class _InstallIconButton extends StatelessWidget {
-  const _InstallIconButton({required this.uiState, required this.onPressed});
+class _InstallIconButton extends ConsumerWidget {
+  const _InstallIconButton({required this.gameId, required this.onPressed});
 
-  final GameInstallUiState uiState;
+  final int gameId;
   final VoidCallback onPressed;
 
   @override
-  Widget build(BuildContext context) {
-    final (icon, tooltip) = switch (uiState.action) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final action = ref.watch(
+      gameInstallUiStateProvider(gameId).select((state) => state.action),
+    );
+    final (icon, tooltip) = switch (action) {
       GamePrimaryAction.play => (Icons.play_arrow_rounded, 'Играть'),
       GamePrimaryAction.update => (Icons.system_update_rounded, 'Обновить'),
       GamePrimaryAction.downloading => (Icons.downloading, 'Скачивание'),

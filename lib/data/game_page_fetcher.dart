@@ -1,10 +1,9 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 
+import '../core/utils/http_response_body.dart';
 import 'game_page_models.dart';
 import 'game_page_parser.dart';
 import 'game_web_url.dart';
@@ -77,7 +76,7 @@ class GamePageFetcher {
     };
     final response = await _client.get(Uri.parse(url), headers: headers);
     if (response.statusCode >= 200 && response.statusCode < 300) {
-      return utf8.decode(response.bodyBytes, allowMalformed: true);
+      return decodeHttpResponseBody(response);
     }
     return null;
   }

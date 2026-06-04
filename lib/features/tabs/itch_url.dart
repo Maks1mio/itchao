@@ -28,9 +28,9 @@ class ItchUrl {
     final page = uri.host.isNotEmpty ? uri.host : (uri.pathSegments.isNotEmpty ? uri.pathSegments.first : 'new-tab');
     final segment = uri.pathSegments.isNotEmpty && uri.host.isNotEmpty ? uri.pathSegments.first : null;
     final labelParam = uri.queryParameters['label'];
-    final displayLabel = labelParam != null && labelParam.isNotEmpty
-        ? Uri.decodeComponent(labelParam)
-        : null;
+    // queryParameters уже декодированы; повторный decodeComponent ломает «%» в названии.
+    final displayLabel =
+        labelParam != null && labelParam.isNotEmpty ? labelParam : null;
     return ItchUrl(page: page, segment: segment, displayLabel: displayLabel);
   }
 

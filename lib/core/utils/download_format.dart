@@ -49,3 +49,25 @@ String downloadReasonLabelRu(DownloadReason reason) {
     DownloadReason.reinstall => 'переустановка',
   };
 }
+
+/// Human-readable install failure from PackageInstaller / Android.
+String formatInstallFailureMessage(String? raw) {
+  final message = raw?.trim() ?? '';
+  if (message.isEmpty) {
+    return 'Установка отменена или не удалась';
+  }
+  final lower = message.toLowerCase();
+  if (lower.contains('no_matching_abis') || lower.contains('no matching abis')) {
+    return 'APK не подходит для вашего устройства (архитектура процессора)';
+  }
+  if (lower.contains('insufficient_storage')) {
+    return 'Недостаточно места на устройстве';
+  }
+  if (lower.contains('version_downgrade')) {
+    return 'Нельзя установить более старую версию поверх новой';
+  }
+  if (lower.contains('conflict') || lower.contains('already exists')) {
+    return 'Конфликт с уже установленным приложением';
+  }
+  return message;
+}

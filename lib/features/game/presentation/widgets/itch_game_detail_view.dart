@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/itch_colors.dart';
 import '../../../install/game_install_status_provider.dart';
 import '../../../../core/utils/itch_cached_network_image.dart';
 import '../../../../data/game_page_models.dart';
 import '../../../../data/game_page_theme.dart';
+import 'game_also_check_out_section.dart';
+import 'game_more_info_panel.dart';
 import 'game_screenshot_gallery.dart';
 import 'itch_formatted_description.dart';
 
@@ -14,7 +17,6 @@ class ItchGameDetailView extends StatelessWidget {
     required this.detail,
     required this.displayTitle,
     required this.owned,
-    required this.uiState,
     required this.onPrimaryAction,
     super.key,
   });
@@ -22,7 +24,6 @@ class ItchGameDetailView extends StatelessWidget {
   final GameDetail detail;
   final String displayTitle;
   final bool owned;
-  final GameInstallUiState uiState;
   final VoidCallback onPrimaryAction;
 
   /// `.inner_column` — полупрозрачный, сквозь него виден фон `.wrapper`.
@@ -79,7 +80,7 @@ class ItchGameDetailView extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         _PrimaryActionButton(
-                          uiState: uiState,
+                          gameId: detail.id,
                           onPressed: onPrimaryAction,
                           background: btnBg,
                           foreground: btnFg,
@@ -98,24 +99,32 @@ class ItchGameDetailView extends StatelessWidget {
                     ),
                   Container(
                     color: panelBg,
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                    child: _DescriptionBlock(
-                      detail: detail,
-                      textColor: textColor,
+                    padding: const EdgeInsets.fromLTRB(0, 16, 0, 0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _DescriptionBlock(
+                          detail: detail,
+                          textColor: textColor,
+                        ),
+                        if (detail.descriptionFooterHtml.trim().isNotEmpty)
+                          ItchFormattedDescription(
+                            html: detail.descriptionFooterHtml,
+                            theme: theme,
+                          ),
+                        if (detail.relatedGames.isNotEmpty)
+                          GameAlsoCheckOutSection(
+                            games: detail.relatedGames,
+                            theme: theme,
+                          ),
+                      ],
                     ),
                   ),
-                  if (detail.tags.isNotEmpty)
+                  if (detail.infoEntries.isNotEmpty)
                     Container(
                       color: panelBg,
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                      child: _TagRow(tags: detail.tags, theme: theme),
-                    ),
-                  if (detail.infoRows.isNotEmpty)
-                    Container(
-                      color: panelBg,
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
-                      child: _InfoPanel(
-                        detail: detail,
+                      child: GameMoreInfoPanel(
+                        entries: detail.infoEntries,
                         textColor: textColor,
                         theme: theme,
                       ),
@@ -274,59 +283,58 @@ class _MetaLine extends StatelessWidget {
   }
 }
 
-class _PrimaryActionButton extends StatelessWidget {
+class _PrimaryActionButton extends ConsumerWidget {
   const _PrimaryActionButton({
-    required this.uiState,
+    required this.gameId,
     required this.onPressed,
     required this.background,
     required this.foreground,
   });
 
-  final GameInstallUiState uiState;
+  final int gameId;
   final VoidCallback onPressed;
   final Color background;
   final Color foreground;
 
   @override
-  Widget build(BuildContext context) {
-    final (icon, label, enabled) = switch (uiState.action) {
-      GamePrimaryAction.install => (Icons.download_rounded, 'Установить', true),
-      GamePrimaryAction.play => (Icons.play_arrow_rounded, 'Играть', true),
-      GamePrimaryAction.update => (Icons.system_update_rounded, 'Обновить', true),
-      GamePrimaryAction.downloading => (Icons.downloading, 'Скачивание…', false),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final uiState = gameId > 0
+        ? gameInstallUiStateFromSnapshot(
+            ref.watch(
+              gameInstallUiStateProvider(gameId).select(gameInstallUiSnapshot),
+            ),
+          )
+        : const GameInstallUiState(action: GamePrimaryAction.install);
+    final isDownloading = uiState.action == GamePrimaryAction.downloading;
+    final progress = uiState.downloadProgress?.clamp(0.0, 1.0);
+
+    final (icon, label) = switch (uiState.action) {
+      GamePrimaryAction.install => (Icons.download_rounded, 'Установить'),
+      GamePrimaryAction.play => (Icons.play_arrow_rounded, 'Играть'),
+      GamePrimaryAction.update => (Icons.system_update_rounded, 'Обновить'),
+      GamePrimaryAction.downloading => (
+          Icons.download_rounded,
+          _downloadLabel(progress),
+        ),
     };
 
-    final child = FilledButton.icon(
-      onPressed: enabled ? onPressed : null,
-      icon: Icon(icon, color: foreground, size: 20),
-      label: Text(
-        label,
-        style: TextStyle(color: foreground, fontWeight: FontWeight.w600, fontSize: 15),
-      ),
-      style: FilledButton.styleFrom(
-        backgroundColor: background,
-        minimumSize: const Size(double.infinity, 48),
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        shape: const StadiumBorder(),
-      ),
+    final button = _ProgressActionButton(
+      icon: icon,
+      label: label,
+      hint: isDownloading ? 'Открыть загрузки' : null,
+      onPressed: onPressed,
+      background: background,
+      foreground: foreground,
+      progress: isDownloading ? progress : null,
     );
 
-    if (uiState.action == GamePrimaryAction.downloading &&
-        uiState.downloadProgress != null) {
+    if (uiState.updateAvailable &&
+        !isDownloading &&
+        uiState.latestVersion != null) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          child,
-          const SizedBox(height: 8),
-          LinearProgressIndicator(value: uiState.downloadProgress),
-        ],
-      );
-    }
-    if (uiState.updateAvailable && uiState.latestVersion != null) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          child,
+          button,
           const SizedBox(height: 6),
           Text(
             'Доступна версия ${uiState.latestVersion}',
@@ -335,7 +343,240 @@ class _PrimaryActionButton extends StatelessWidget {
         ],
       );
     }
-    return child;
+    return button;
+  }
+
+  static String _downloadLabel(double? progress) {
+    if (progress == null || progress <= 0) {
+      return 'Скачивание…';
+    }
+    return 'Скачивание ${(progress * 100).round()}%';
+  }
+}
+
+class _ProgressActionButton extends StatelessWidget {
+  const _ProgressActionButton({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    required this.background,
+    required this.foreground,
+    this.hint,
+    this.progress,
+  });
+
+  final IconData icon;
+  final String label;
+  final String? hint;
+  final VoidCallback onPressed;
+  final Color background;
+  final Color foreground;
+  final double? progress;
+
+  static const _height = 48.0;
+  static const _radius = 24.0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (progress == null && hint == null) {
+      return Material(
+        color: background,
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(_radius),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onPressed,
+          child: SizedBox(
+            height: _height,
+            width: double.infinity,
+            child: _ButtonContent(
+              icon: icon,
+              label: label,
+              foreground: foreground,
+            ),
+          ),
+        ),
+      );
+    }
+
+    final trackColor = Color.alphaBlend(
+      foreground.withValues(alpha: 0.12),
+      background.withValues(alpha: 0.45),
+    );
+    final fillFactor = progress == null || progress! <= 0
+        ? null
+        : progress!.clamp(0.06, 1.0);
+
+    return Material(
+      color: trackColor,
+      elevation: 0,
+      shadowColor: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(_radius),
+        side: BorderSide(color: foreground.withValues(alpha: 0.18)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onPressed,
+        child: SizedBox(
+          height: _height,
+          width: double.infinity,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (fillFactor != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: fillFactor,
+                    heightFactor: 1,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: background,
+                        boxShadow: [
+                          BoxShadow(
+                            color: background.withValues(alpha: 0.35),
+                            blurRadius: 8,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                )
+              else if (hint != null)
+                _IndeterminateFill(color: background),
+              _ButtonContent(
+                icon: icon,
+                label: label,
+                hint: hint,
+                foreground: foreground,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ButtonContent extends StatelessWidget {
+  const _ButtonContent({
+    required this.icon,
+    required this.label,
+    required this.foreground,
+    this.hint,
+  });
+
+  final IconData icon;
+  final String label;
+  final String? hint;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
+        children: [
+          Icon(icon, color: foreground, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: foreground,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                    height: 1.1,
+                  ),
+                ),
+                if (hint != null) ...[
+                  const SizedBox(height: 1),
+                  Text(
+                    hint!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: foreground.withValues(alpha: 0.78),
+                      fontSize: 11,
+                      height: 1.1,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (hint != null)
+            Icon(
+              Icons.chevron_right_rounded,
+              color: foreground.withValues(alpha: 0.85),
+              size: 22,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _IndeterminateFill extends StatefulWidget {
+  const _IndeterminateFill({required this.color});
+
+  final Color color;
+
+  @override
+  State<_IndeterminateFill> createState() => _IndeterminateFillState();
+}
+
+class _IndeterminateFillState extends State<_IndeterminateFill>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        return Align(
+          alignment: Alignment.centerLeft,
+          child: FractionallySizedBox(
+            widthFactor: 0.28,
+            heightFactor: 1,
+            child: FractionalTranslation(
+              translation: Offset(_controller.value * 2.6, 0),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      widget.color.withValues(alpha: 0.15),
+                      widget.color,
+                      widget.color.withValues(alpha: 0.15),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 }
 
@@ -352,9 +593,16 @@ class _DescriptionBlock extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'Описание',
-          style: TextStyle(color: textColor, fontSize: 15, fontWeight: FontWeight.w600),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Text(
+            'Описание',
+            style: TextStyle(
+              color: textColor,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
         const SizedBox(height: 10),
         if (hasHtml)
@@ -363,88 +611,30 @@ class _DescriptionBlock extends StatelessWidget {
             theme: detail.theme,
           )
         else if (detail.description.trim().isNotEmpty || detail.shortText.trim().isNotEmpty)
-          Text(
-            detail.description.trim().isNotEmpty ? detail.description : detail.shortText,
-            style: TextStyle(color: textColor.withValues(alpha: 0.9), height: 1.5, fontSize: 14),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              detail.description.trim().isNotEmpty
+                  ? detail.description
+                  : detail.shortText,
+              style: TextStyle(
+                color: textColor.withValues(alpha: 0.9),
+                height: 1.5,
+                fontSize: 14,
+              ),
+            ),
           )
         else
-          Text(
-            'Описание загрузится с itch.io (нужен интернет).',
-            style: TextStyle(color: textColor.withValues(alpha: 0.6), fontSize: 13),
-          ),
-      ],
-    );
-  }
-}
-
-class _TagRow extends StatelessWidget {
-  const _TagRow({required this.tags, this.theme});
-
-  final List<String> tags;
-  final GamePageTheme? theme;
-
-  @override
-  Widget build(BuildContext context) {
-    final fg = theme?.textColor ?? ItchColors.filterTagText;
-
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: tags.map((tag) {
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.25),
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: theme?.borderColor ?? ItchColors.border),
-          ),
-          child: Text(tag, style: TextStyle(color: fg, fontSize: 12)),
-        );
-      }).toList(),
-    );
-  }
-}
-
-class _InfoPanel extends StatelessWidget {
-  const _InfoPanel({required this.detail, required this.textColor, this.theme});
-
-  final GameDetail detail;
-  final Color textColor;
-  final GamePageTheme? theme;
-
-  @override
-  Widget build(BuildContext context) {
-    final rows = detail.infoRows.entries
-        .where((e) => !{'Платформы', 'Platforms'}.contains(e.key))
-        .take(8)
-        .toList();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Информация', style: TextStyle(color: textColor, fontWeight: FontWeight.w600, fontSize: 15)),
-        const SizedBox(height: 8),
-        for (final row in rows) ...[
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 100,
-                child: Text(
-                  row.key,
-                  style: TextStyle(color: textColor.withValues(alpha: 0.55), fontSize: 12),
-                ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              'Описание загрузится с itch.io (нужен интернет).',
+              style: TextStyle(
+                color: textColor.withValues(alpha: 0.6),
+                fontSize: 13,
               ),
-              Expanded(
-                child: Text(
-                  row.value,
-                  style: TextStyle(color: textColor.withValues(alpha: 0.9), fontSize: 12),
-                ),
-              ),
-            ],
+            ),
           ),
-          const SizedBox(height: 5),
-        ],
       ],
     );
   }

@@ -12,6 +12,7 @@ import '../../tabs/tabs_controller.dart';
 import '../game_catalog.dart';
 import '../../../domain/use_cases/launch_game_use_case.dart';
 import '../../../domain/use_cases/providers.dart';
+import '../../downloads/downloads_controller.dart';
 import '../../install/game_install_status_provider.dart';
 import '../../../data/game_url_resolver.dart';
 import '../../../data/game_web_url.dart';
@@ -29,17 +30,60 @@ class GameDetailPage extends ConsumerStatefulWidget {
   ConsumerState<GameDetailPage> createState() => _GameDetailPageState();
 }
 
+class GameDetailFromUrlPage extends ConsumerWidget {
+  const GameDetailFromUrlPage({
+    required this.webUrl,
+    this.fallbackTitle,
+    super.key,
+  });
+
+  final String webUrl;
+  final String? fallbackTitle;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final detailAsync = ref.watch(gameDetailByUrlProvider(webUrl));
+
+    return detailAsync.when(
+      skipLoadingOnReload: true,
+      loading: () => const _GameDetailSkeleton(),
+      error: (error, _) => _GamePageErrorState(gameId: 0, message: error.toString()),
+      data: (detail) {
+        final displayTitle = _GameDetailPageState._resolveTitle(
+          detail: detail,
+          seed: null,
+          fallbackTitle: fallbackTitle,
+          tabTitle: null,
+        );
+        return ItchGameDetailView(
+          detail: detail,
+          displayTitle: displayTitle,
+          owned: false,
+          onPrimaryAction: () => _runGamePrimaryAction(
+            context,
+            ref,
+            detail,
+            displayTitle: displayTitle,
+          ),
+        );
+      },
+    );
+  }
+}
+
 class _GameDetailPageState extends ConsumerState<GameDetailPage> {
+  TabChromeNotifier? _tabChrome;
+
   @override
   void initState() {
     super.initState();
+    _tabChrome = ref.read(tabChromeProvider.notifier);
     WidgetsBinding.instance.addPostFrameCallback((_) => _bindChrome());
   }
 
   @override
   void dispose() {
-    final chrome = ref.read(tabChromeProvider.notifier);
-    Future.microtask(chrome.clearPageMenu);
+    _tabChrome?.clearPageMenu();
     super.dispose();
   }
 
@@ -70,21 +114,20 @@ class _GameDetailPageState extends ConsumerState<GameDetailPage> {
     final seed = ref.watch(gameSeedProvider(widget.gameId));
     final detailAsync = ref.watch(gameDetailProvider(widget.gameId));
     final ownedAsync = ref.watch(gameOwnedProvider(widget.gameId));
-    final uiState = ref.watch(gameInstallUiStateProvider(widget.gameId));
     final tabTitle = _activeTabTitle(ref, widget.gameId);
 
     return detailAsync.when(
+      skipLoadingOnReload: true,
       loading: () {
         if (seed != null) {
           return _body(
             detail: _detailFromSeed(seed),
             displayTitle: seed.title,
             owned: ownedAsync.valueOrNull ?? true,
-            uiState: uiState,
-            onPrimaryAction: () => _onPrimaryAction(context, ref, seed, uiState),
+            onPrimaryAction: () => _onPrimaryAction(context, ref, seed),
           );
         }
-        return const Center(child: CircularProgressIndicator());
+        return const _GameDetailSkeleton();
       },
       error: (error, _) {
         if (seed != null) {
@@ -92,8 +135,7 @@ class _GameDetailPageState extends ConsumerState<GameDetailPage> {
             detail: _detailFromSeed(seed),
             displayTitle: seed.title,
             owned: ownedAsync.valueOrNull ?? true,
-            uiState: uiState,
-            onPrimaryAction: () => _onPrimaryAction(context, ref, seed, uiState),
+            onPrimaryAction: () => _onPrimaryAction(context, ref, seed),
           );
         }
         return _GamePageErrorState(
@@ -112,12 +154,10 @@ class _GameDetailPageState extends ConsumerState<GameDetailPage> {
           detail: detail,
           displayTitle: displayTitle,
           owned: ownedAsync.valueOrNull ?? seed != null,
-          uiState: uiState,
           onPrimaryAction: () => _onPrimaryAction(
             context,
             ref,
             detail,
-            uiState,
             displayTitle: displayTitle,
           ),
         );
@@ -129,14 +169,12 @@ class _GameDetailPageState extends ConsumerState<GameDetailPage> {
     required GameDetail detail,
     required String displayTitle,
     required bool owned,
-    required GameInstallUiState uiState,
     required VoidCallback onPrimaryAction,
   }) {
     return ItchGameDetailView(
       detail: detail,
       displayTitle: displayTitle,
       owned: owned,
-      uiState: uiState,
       onPrimaryAction: onPrimaryAction,
     );
   }
@@ -157,7 +195,9 @@ class _GameDetailPageState extends ConsumerState<GameDetailPage> {
   }
 
   static String? _activeTabTitle(WidgetRef ref, int gameId) {
-    final tabs = ref.watch(tabsControllerProvider).valueOrNull;
+    final tabs = ref.watch(
+      tabsControllerProvider.select((async) => async.asData?.value),
+    );
     final active = tabs?.activeTab;
     if (active == null) {
       return null;
@@ -215,62 +255,273 @@ class _GameDetailPageState extends ConsumerState<GameDetailPage> {
   Future<void> _onPrimaryAction(
     BuildContext context,
     WidgetRef ref,
-    Object target,
-    GameInstallUiState uiState, {
+    Object target, {
     String? displayTitle,
   }) async {
-    final id = switch (target) {
-      GameDetail d => d.id,
-      LibraryGame g => g.id,
-      _ => 0,
-    };
-    final title = displayTitle ??
-        switch (target) {
-          GameDetail d => d.title,
-          LibraryGame g => g.title,
-          _ => 'Игра',
-        };
-    final cover = switch (target) {
-      GameDetail d => d.coverUrl ?? d.iconUrl,
-      LibraryGame g => g.coverUrl,
-      _ => null,
-    };
-    if (id <= 0) {
-      return;
-    }
+    await _runGamePrimaryAction(
+      context,
+      ref,
+      target,
+      displayTitle: displayTitle,
+    );
+  }
+}
 
-    if (uiState.action == GamePrimaryAction.play) {
-      try {
-        await ref.read(launchGameUseCaseProvider).call(
-          gameId: id,
-          title: title,
-          coverUrl: cover,
-        );
-      } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Не удалось запустить: $e')),
-          );
-        }
-      }
-      return;
-    }
+Future<void> _runGamePrimaryAction(
+  BuildContext context,
+  WidgetRef ref,
+  Object target, {
+  String? displayTitle,
+}) async {
+  final id = switch (target) {
+    GameDetail d => d.id,
+    LibraryGame g => g.id,
+    _ => 0,
+  };
+  final title = displayTitle ??
+      switch (target) {
+        GameDetail d => d.title,
+        LibraryGame g => g.title,
+        _ => 'Игра',
+      };
+  final cover = switch (target) {
+    GameDetail d => d.coverUrl ?? d.iconUrl,
+    LibraryGame g => g.coverUrl,
+    _ => null,
+  };
+  if (id <= 0) {
+    return;
+  }
 
-    if (uiState.action == GamePrimaryAction.install ||
-        uiState.action == GamePrimaryAction.update) {
-      final reason = uiState.action == GamePrimaryAction.update
-          ? DownloadReason.update
-          : DownloadReason.install;
-      await ref.read(enqueueDownloadUseCaseProvider).call(
-        gameId: id,
-        gameTitle: title,
-        reason: reason,
-        coverUrl: cover,
-      );
+  final uiState = ref.read(gameInstallUiStateProvider(id));
+
+  if (uiState.action == GamePrimaryAction.downloading) {
+    if (context.mounted) {
+      context.push('/downloads');
+    }
+    return;
+  }
+
+  final pendingInstall = ref.read(downloadsControllerProvider).where(
+    (task) =>
+        task.gameId == id &&
+        (task.status == DownloadStatus.awaitingInstall ||
+            task.status == DownloadStatus.installing),
+  ).firstOrNull;
+  if (pendingInstall != null) {
+    if (pendingInstall.status == DownloadStatus.installing) {
       if (context.mounted) {
         context.push('/downloads');
       }
+      return;
     }
+    try {
+      await ref.read(downloadsControllerProvider.notifier).beginInstall(pendingInstall.id);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e')),
+        );
+      }
+    }
+    return;
+  }
+
+  if (uiState.action == GamePrimaryAction.play) {
+    try {
+      await ref.read(launchGameUseCaseProvider).call(
+        gameId: id,
+        title: title,
+        coverUrl: cover,
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Не удалось запустить: $e')),
+        );
+      }
+    }
+    return;
+  }
+
+  if (uiState.action == GamePrimaryAction.install ||
+      uiState.action == GamePrimaryAction.update) {
+    final reason = uiState.action == GamePrimaryAction.update
+        ? DownloadReason.update
+        : DownloadReason.install;
+    await ref.read(enqueueDownloadUseCaseProvider).call(
+      gameId: id,
+      gameTitle: title,
+      reason: reason,
+      coverUrl: cover,
+    );
+  }
+}
+
+class _GameDetailSkeleton extends StatefulWidget {
+  const _GameDetailSkeleton();
+
+  @override
+  State<_GameDetailSkeleton> createState() => _GameDetailSkeletonState();
+}
+
+class _GameDetailSkeletonState extends State<_GameDetailSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 950),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final topInset = MediaQuery.paddingOf(context).top + kToolbarHeight;
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final t = Curves.easeInOut.transform(_controller.value);
+        final base = Color.lerp(ItchColors.codGray, ItchColors.darkMineShaft, t)!;
+        final hi = Color.lerp(ItchColors.darkMineShaft, ItchColors.lightMineShaft, t)!;
+        return ColoredBox(
+          color: ItchColors.background,
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              _SkeletonBar(height: topInset + 86, color: base),
+              Container(
+                color: ItchColors.item.withValues(alpha: 0.7),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _SkeletonBox(width: 120, height: 12, color: hi),
+                    const SizedBox(height: 10),
+                    _SkeletonBox(width: 220, height: 30, color: hi),
+                    const SizedBox(height: 14),
+                    _SkeletonBox(width: double.infinity, height: 20, color: base),
+                    const SizedBox(height: 16),
+                    _SkeletonBox(
+                      width: double.infinity,
+                      height: 48,
+                      color: ItchColors.accent.withValues(alpha: 0.75),
+                      radius: 999,
+                    ),
+                    const SizedBox(height: 18),
+                    _SkeletonBox(width: 110, height: 18, color: hi),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        for (var i = 0; i < 3; i++) ...[
+                          Expanded(
+                            child: _SkeletonBox(
+                              width: double.infinity,
+                              height: 112,
+                              color: base,
+                              radius: 10,
+                            ),
+                          ),
+                          if (i < 2) const SizedBox(width: 8),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    _SkeletonBox(width: 110, height: 18, color: hi),
+                    const SizedBox(height: 10),
+                    _SkeletonBox(width: 180, height: 28, color: hi),
+                    const SizedBox(height: 12),
+                    for (final w in const [1.0, 0.95, 0.9, 0.84])
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: FractionallySizedBox(
+                          widthFactor: w,
+                          child: _SkeletonBox(
+                            width: double.infinity,
+                            height: 14,
+                            color: base,
+                            radius: 6,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 14),
+                    _SkeletonBox(width: double.infinity, height: 180, color: base, radius: 10),
+                    const SizedBox(height: 18),
+                    const Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _SkeletonChip(width: 84),
+                        _SkeletonChip(width: 76),
+                        _SkeletonChip(width: 92),
+                        _SkeletonChip(width: 70),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SkeletonBar extends StatelessWidget {
+  const _SkeletonBar({required this.height, required this.color});
+
+  final double height;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(height: height, color: color);
+  }
+}
+
+class _SkeletonBox extends StatelessWidget {
+  const _SkeletonBox({
+    required this.width,
+    required this.height,
+    required this.color,
+    this.radius = 8,
+  });
+
+  final double width;
+  final double height;
+  final Color color;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(radius),
+      ),
+    );
+  }
+}
+
+class _SkeletonChip extends StatelessWidget {
+  const _SkeletonChip({required this.width});
+
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SkeletonBox(
+      width: width,
+      height: 28,
+      color: ItchColors.darkMineShaft,
+      radius: 18,
+    );
   }
 }
 

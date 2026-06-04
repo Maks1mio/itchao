@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -19,13 +21,27 @@ class DownloadsPage extends ConsumerStatefulWidget {
   ConsumerState<DownloadsPage> createState() => _DownloadsPageState();
 }
 
-class _DownloadsPageState extends ConsumerState<DownloadsPage> {
+class _DownloadsPageState extends ConsumerState<DownloadsPage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(downloadsControllerProvider.notifier).reconcileActiveTasks();
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(ref.read(downloadsControllerProvider.notifier).reconcileActiveTasks());
+    }
   }
 
   @override
@@ -56,27 +72,33 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
                     DownloadRow(
                       task: activeTasks.first,
                       isFirst: true,
-                      onDismiss: () => ref
-                          .read(downloadsControllerProvider.notifier)
-                          .cancelActive(activeTasks.first.id),
+                      onDismiss: () => unawaited(
+                        ref
+                            .read(downloadsControllerProvider.notifier)
+                            .cancelActive(activeTasks.first.id),
+                      ),
                     ),
                     if (activeTasks.length > 1) ...[
                       _SectionBar(
                         title: 'В очереди',
                         trailing: _TextAction(
                           label: 'Отменить все',
-                          onPressed: () => ref
-                              .read(downloadsControllerProvider.notifier)
-                              .cancelAllActive(),
+                          onPressed: () => unawaited(
+                            ref
+                                .read(downloadsControllerProvider.notifier)
+                                .cancelAllActive(),
+                          ),
                         ),
                       ),
                       for (var i = 1; i < activeTasks.length; i++)
                         DownloadRow(
                           task: activeTasks[i],
                           isQueued: true,
-                          onDismiss: () => ref
-                              .read(downloadsControllerProvider.notifier)
-                              .cancelActive(activeTasks[i].id),
+                          onDismiss: () => unawaited(
+                            ref
+                                .read(downloadsControllerProvider.notifier)
+                                .cancelActive(activeTasks[i].id),
+                          ),
                         ),
                     ],
                   ],

@@ -26,11 +26,13 @@ class TabsController extends AsyncNotifier<TabsState> {
   static const _initialTabId = 'initial-tab';
   final Map<String, List<_TabNavFrame>> _tabHistories = {};
   var _persistenceReady = false;
+  var _alive = true;
   Timer? _persistDebounce;
   TabsState? _lastFullPersistSnapshot;
 
   @override
   Future<TabsState> build() async {
+    ref.onDispose(() => _alive = false);
     final stored = await TabsPersistence.load();
     if (stored != null) {
       _tabHistories.clear();
@@ -68,6 +70,9 @@ class TabsController extends AsyncNotifier<TabsState> {
   }
 
   void _commit(TabsState next) {
+    if (!_alive) {
+      return;
+    }
     state = AsyncData(next);
     if (!_persistenceReady) {
       return;

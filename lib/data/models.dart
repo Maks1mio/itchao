@@ -1,6 +1,13 @@
 enum AppRouteTab { library, downloads, settings }
 
-enum DownloadStatus { queued, running, completed, failed }
+enum DownloadStatus {
+  queued,
+  running,
+  awaitingInstall,
+  installing,
+  completed,
+  failed,
+}
 
 enum DownloadReason { install, update, reinstall }
 
@@ -126,7 +133,10 @@ class DownloadTask {
   final String? packageName;
 
   bool get isActive =>
-      status == DownloadStatus.queued || status == DownloadStatus.running;
+      status == DownloadStatus.queued ||
+      status == DownloadStatus.running ||
+      status == DownloadStatus.awaitingInstall ||
+      status == DownloadStatus.installing;
 
   DownloadTask copyWith({
     String? id,

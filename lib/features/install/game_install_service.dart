@@ -21,6 +21,15 @@ class GameInstallService {
 
   final Ref _ref;
 
+  Future<File?> findPendingApk(int gameId) => _findApkFile(gameId);
+
+  Future<void> deleteDownloadedApk(int gameId) async {
+    final dir = await _gameInstallDir(gameId);
+    if (await dir.exists()) {
+      await dir.delete(recursive: true);
+    }
+  }
+
   Future<String> _requireDownloadApiKey() async {
     final full = await _ref.read(authControllerProvider.notifier).readFullApiKey();
     if (full != null && full.isNotEmpty) {
@@ -37,6 +46,42 @@ class GameInstallService {
     required String title,
     String? coverUrl,
     DownloadReason reason = DownloadReason.install,
+    DownloadCancelledCheck? isCancelled,
+    void Function(DownloadProgressUpdate update)? onProgress,
+  }) async {
+    final result = await downloadApkForGame(
+      gameId: gameId,
+      title: title,
+      coverUrl: coverUrl,
+      isCancelled: isCancelled,
+      onProgress: onProgress,
+    );
+    if (result.alreadyInstalled) {
+      return;
+    }
+    final installed = await installDownloadedApk(
+      gameId: gameId,
+      title: title,
+      coverUrl: coverUrl,
+      packageName: result.packageName,
+      uploadId: result.uploadId,
+      channelName: result.channelName,
+      userVersion: result.userVersion,
+      isCancelled: isCancelled,
+      onProgress: onProgress,
+    );
+    if (!installed) {
+      throw Exception(
+        'Подтвердите установку в диалоге Android или нажмите «Установить» снова.',
+      );
+    }
+  }
+
+  /// Downloads and validates the APK. Does not launch the system installer.
+  Future<ApkDownloadResult> downloadApkForGame({
+    required int gameId,
+    required String title,
+    String? coverUrl,
     DownloadCancelledCheck? isCancelled,
     void Function(DownloadProgressUpdate update)? onProgress,
   }) async {
@@ -110,7 +155,7 @@ class GameInstallService {
       apkFile,
       isCancelled: isCancelled,
       onProgress: (p, stats) => report(
-        0.05 + p * 0.85,
+        p,
         bps: stats.bytesPerSecond,
         eta: stats.etaSeconds,
         file: upload.filename,
@@ -125,14 +170,6 @@ class GameInstallService {
     knownPackage = packageName;
 
     ensureNotCancelled();
-    if (!await apk.canInstallPackages()) {
-      await apk.requestInstallPermission();
-      throw InstallPermissionRequiredException(
-        'Разрешите itchao устанавливать приложения в настройках Android, '
-        'затем повторите установку.',
-      );
-    }
-
     if (await apk.isAppInstalled(packageName)) {
       await _saveInstalledRecord(
         gameId: gameId,
@@ -145,33 +182,135 @@ class GameInstallService {
         coverUrl: coverUrl,
       );
       report(1, file: upload.filename);
-      return;
+      return ApkDownloadResult(
+        alreadyInstalled: true,
+        packageName: packageName,
+        uploadId: upload.id,
+        channelName: upload.channelName,
+        userVersion: upload.userVersion,
+        filename: upload.filename,
+      );
     }
 
-    report(0.92, file: upload.filename);
+    report(1, file: upload.filename);
+    return ApkDownloadResult(
+      packageName: packageName,
+      uploadId: upload.id,
+      channelName: upload.channelName,
+      userVersion: upload.userVersion,
+      filename: upload.filename,
+    );
+  }
+
+  /// Opens the system installer for a downloaded APK.
+  ///
+  /// Returns `true` when the app is already on device and the local record is saved.
+  /// When [waitForCompletion] is `false`, returns `false` after launching the system
+  /// installer (user must confirm in Android).
+  Future<bool> installDownloadedApk({
+    required int gameId,
+    required String title,
+    String? coverUrl,
+    String? packageName,
+    int? uploadId,
+    String? channelName,
+    String? userVersion,
+    DownloadCancelledCheck? isCancelled,
+    void Function(DownloadProgressUpdate update)? onProgress,
+    bool waitForCompletion = true,
+  }) async {
+    void ensureNotCancelled() {
+      if (isCancelled?.call() == true) {
+        throw const DownloadCancelledException();
+      }
+    }
+
+    void report(double progress, {String? file, String? pkg}) {
+      onProgress?.call(
+        DownloadProgressUpdate(
+          progress: progress,
+          filename: file,
+          packageName: pkg,
+        ),
+      );
+    }
+
+    ensureNotCancelled();
+    final apkFile = await _findApkFile(gameId);
+    if (apkFile == null) {
+      throw Exception('Файл установки не найден. Скачайте игру снова.');
+    }
+
+    await _validateApkFile(apkFile);
+
+    final apk = _ref.read(apkPlatformChannelProvider);
+    final apkPackage = await apk.getPackageNameFromApk(apkFile.path);
+    var resolvedPackage = apkPackage ?? packageName;
+    if (_isPlaceholderPackage(resolvedPackage)) {
+      resolvedPackage = apkPackage;
+    }
+
+    ensureNotCancelled();
+    if (!await apk.canInstallPackages()) {
+      await apk.requestInstallPermission();
+      throw InstallPermissionRequiredException(
+        'Разрешите itchao устанавливать приложения в настройках Android, '
+        'затем повторите установку.',
+      );
+    }
+
+    if (resolvedPackage != null &&
+        resolvedPackage.isNotEmpty &&
+        await apk.isAppInstalled(resolvedPackage)) {
+      await _saveInstalledRecord(
+        gameId: gameId,
+        title: title,
+        apkPath: apkFile.path,
+        packageName: resolvedPackage,
+        uploadId: uploadId ?? 0,
+        channelName: channelName,
+        userVersion: userVersion,
+        coverUrl: coverUrl,
+      );
+      report(1, file: apkFile.path.split(Platform.pathSeparator).last, pkg: resolvedPackage);
+      return true;
+    }
+
+    report(0.98, file: apkFile.path.split(Platform.pathSeparator).last, pkg: resolvedPackage);
     await apk.installApk(
       apkFile.path,
       gameId: gameId,
-      packageName: packageName,
+      packageName: resolvedPackage,
     );
 
-    await _waitForPackageInstalled(
-      packageName: packageName,
+    if (!waitForCompletion) {
+      return false;
+    }
+
+    if (resolvedPackage == null || resolvedPackage.isEmpty) {
+      return false;
+    }
+
+    final installed = await _waitForPackageInstalled(
+      packageName: resolvedPackage,
       isCancelled: isCancelled,
-      onTick: (progress) => report(progress, file: upload.filename),
     );
+    if (!installed) {
+      return false;
+    }
 
     await _saveInstalledRecord(
       gameId: gameId,
       title: title,
       apkPath: apkFile.path,
-      packageName: packageName,
-      uploadId: upload.id,
-      channelName: upload.channelName,
-      userVersion: upload.userVersion,
+      packageName: resolvedPackage,
+      uploadId: uploadId ?? 0,
+      channelName: channelName,
+      userVersion: userVersion,
       coverUrl: coverUrl,
     );
-    report(1, file: upload.filename);
+    report(1, file: apkFile.path.split(Platform.pathSeparator).last, pkg: resolvedPackage);
+    return true;
   }
 
   /// Returns true when the game is on device and local install record is saved.
@@ -185,7 +324,20 @@ class GameInstallService {
     final existing = _ref.read(installedGamesProvider)[gameId];
 
     var resolvedPackage = packageName ?? existing?.packageName;
-    if (resolvedPackage != null && await apk.isAppInstalled(resolvedPackage)) {
+    if (_isPlaceholderPackage(resolvedPackage)) {
+      resolvedPackage = null;
+    }
+
+    if (resolvedPackage == null || resolvedPackage.isEmpty) {
+      final apkFile = await _findApkFile(gameId);
+      if (apkFile != null) {
+        resolvedPackage = await apk.getPackageNameFromApk(apkFile.path);
+      }
+    }
+
+    if (resolvedPackage != null &&
+        resolvedPackage.isNotEmpty &&
+        await apk.isAppInstalled(resolvedPackage)) {
       final apkFile = await _findApkFile(gameId);
       await _saveInstalledRecord(
         gameId: gameId,
@@ -201,29 +353,14 @@ class GameInstallService {
       return true;
     }
 
-    final apkFile = await _findApkFile(gameId);
-    if (apkFile == null) {
+    return false;
+  }
+
+  static bool _isPlaceholderPackage(String? packageName) {
+    if (packageName == null || packageName.isEmpty) {
       return false;
     }
-
-    resolvedPackage =
-        resolvedPackage ?? await apk.getPackageNameFromApk(apkFile.path);
-    if (resolvedPackage == null || !await apk.isAppInstalled(resolvedPackage)) {
-      return false;
-    }
-
-    await _saveInstalledRecord(
-      gameId: gameId,
-      title: title,
-      apkPath: apkFile.path,
-      packageName: resolvedPackage,
-      uploadId: existing?.uploadId ?? 0,
-      channelName: existing?.channelName,
-      userVersion: existing?.userVersion,
-      coverUrl: coverUrl ?? existing?.coverUrl,
-      keepInstalledAt: existing?.installedAt,
-    );
-    return true;
+    return packageName.startsWith('game.');
   }
 
   Future<void> _saveInstalledRecord({
@@ -255,35 +392,26 @@ class GameInstallService {
     await _ref.read(installedGamesProvider.notifier).upsert(record);
   }
 
-  Future<void> _waitForPackageInstalled({
+  Future<bool> _waitForPackageInstalled({
     required String packageName,
     DownloadCancelledCheck? isCancelled,
-    required void Function(double progress) onTick,
   }) async {
     final apk = _ref.read(apkPlatformChannelProvider);
     const timeout = Duration(minutes: 3);
     const interval = Duration(milliseconds: 800);
     final deadline = DateTime.now().add(timeout);
-    var tick = 0;
 
     while (DateTime.now().isBefore(deadline)) {
       if (isCancelled?.call() == true) {
         throw const DownloadCancelledException();
       }
       if (await apk.isAppInstalled(packageName)) {
-        return;
+        return true;
       }
-      tick++;
-      onTick((0.93 + tick * 0.005).clamp(0.93, 0.99));
       await Future<void>.delayed(interval);
     }
 
-    if (await apk.isAppInstalled(packageName)) {
-      return;
-    }
-    throw Exception(
-      'Подтвердите установку в диалоге Android или нажмите «Установить» снова.',
-    );
+    return apk.isAppInstalled(packageName);
   }
 
   Future<void> _validateApkFile(File file) async {
@@ -423,4 +551,22 @@ class _DownloadStats {
 
   final double? bytesPerSecond;
   final int? etaSeconds;
+}
+
+class ApkDownloadResult {
+  const ApkDownloadResult({
+    required this.packageName,
+    required this.uploadId,
+    this.channelName,
+    this.userVersion,
+    this.filename,
+    this.alreadyInstalled = false,
+  });
+
+  final String packageName;
+  final int uploadId;
+  final String? channelName;
+  final String? userVersion;
+  final String? filename;
+  final bool alreadyInstalled;
 }

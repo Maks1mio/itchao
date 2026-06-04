@@ -9,6 +9,7 @@ import '../../../data/models.dart';
 import '../../auth/auth_controller.dart';
 import '../../collections/collections_controller.dart';
 import '../settings_account_provider.dart';
+import '../ui_inspector_settings_provider.dart';
 
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
@@ -16,6 +17,7 @@ class SettingsPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final account = ref.watch(settingsAccountProvider);
+    final uiInspectorEnabled = ref.watch(uiInspectorEnabledProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -109,6 +111,18 @@ class SettingsPage extends ConsumerWidget {
               ),
               const SizedBox(height: 24),
               Text('Отладка', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                value: uiInspectorEnabled,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('UI Inspector (тап-лог + обводка)'),
+                subtitle: const Text(
+                  'Пишет в терминал, по чему ты нажал, и подсвечивает элемент рамкой.',
+                ),
+                onChanged: (value) async {
+                  await ref.read(uiInspectorEnabledProvider.notifier).setEnabled(value);
+                },
+              ),
               const SizedBox(height: 8),
               const Text(
                 'Токен даёт доступ к API. Не публикуй его в открытых чатах.',

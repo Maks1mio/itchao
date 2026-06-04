@@ -125,6 +125,16 @@ class _TabContentViewState extends ConsumerState<TabContentView> {
         }
         return const ItchTabBody(child: CollectionsPage());
       case 'games':
+        if (parsed.segment == 'from-url') {
+          final uri = Uri.tryParse(widget.url);
+          final webUrl = uri?.queryParameters['url'];
+          if (webUrl != null && webUrl.isNotEmpty) {
+            return GameDetailFromUrlPage(
+              webUrl: webUrl,
+              fallbackTitle: parsed.displayLabel,
+            );
+          }
+        }
         final gameId = int.tryParse(parsed.segment ?? '');
         if (gameId != null && gameId > 0) {
           return GameDetailPage(

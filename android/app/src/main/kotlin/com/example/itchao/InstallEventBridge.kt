@@ -25,4 +25,19 @@ object InstallEventBridge {
             channel?.invokeMethod("installSuccess", payload)
         }
     }
+
+    fun emitInstallFailed(gameId: Int, status: Int, message: String?) {
+        if (gameId <= 0) {
+            return
+        }
+        val payload =
+            mapOf(
+                "gameId" to gameId,
+                "status" to status,
+                "message" to message,
+            )
+        Handler(Looper.getMainLooper()).post {
+            channel?.invokeMethod("installFailed", payload)
+        }
+    }
 }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'game_page_models.dart';
 import 'game_page_theme.dart';
 import 'game_web_url.dart';
+import 'itch_embed_parser.dart';
 import 'itch_image_urls.dart';
 import 'models.dart';
 
@@ -42,8 +43,20 @@ class ItchGamePageParser {
     r'data-image_lightbox[^>]*(?:src|data-src)=["\x27]([^"\x27]+)["\x27]',
     caseSensitive: false,
   );
+  static final _alsoCheckOutHeading = RegExp(
+    r'<h2[^>]*>\s*Also check out\s*</h2>',
+    caseSensitive: false,
+  );
+  static final _promoIframe = RegExp(
+    r'<iframe\b[^>]*>([\s\S]*?)</iframe>',
+    caseSensitive: false,
+  );
+  static final _gameWidgetBlock = RegExp(
+    r'class="game_widget_page[\s\S]*?<div class="game_summary">([\s\S]*?)</div>\s*</div>\s*</div>',
+    caseSensitive: false,
+  );
   static final _infoPanel = RegExp(
-    r'game_info_panel_widget[\s\S]{0,8000}?<table><tbody>([\s\S]*?)</tbody>',
+    r'game_info_panel_widget[\s\S]{0,12000}?<table><tbody>([\s\S]*?)</tbody>',
     caseSensitive: false,
   );
   static final _infoRow = RegExp(
@@ -103,7 +116,8 @@ class ItchGamePageParser {
     final theme = _parseTheme(html);
     final developer = _parseDeveloper(html, meta, title, resolvedWebUrl);
     final rating = _parseRating(html);
-    final infoRows = _parseInfoPanel(html);
+    final infoEntries = _parseInfoEntries(html);
+    final infoRows = _infoEntriesToMap(infoEntries);
     final platforms = _parsePlatforms(html, infoRows, seed);
     final tags = _parseTags(html, infoRows);
     final statusLabel = infoRows['Состояние'] ?? infoRows['Status'];
@@ -122,6 +136,9 @@ class ItchGamePageParser {
       shortText: shortText,
       description: desc.plain,
       descriptionHtml: desc.html,
+      descriptionFooterHtml: desc.footerHtml,
+      relatedGames: desc.relatedGames,
+      infoEntries: infoEntries,
       classification: seed?.classification ?? 'game',
       platforms: platforms,
       screenshots: screenshots,
@@ -206,13 +223,193 @@ class ItchGamePageParser {
     ]) ?? '';
   }
 
-  ({String html, String plain}) _parseDescription(String pageHtml) {
+  ({
+    String html,
+    String plain,
+    String footerHtml,
+    List<GamePromoCard> relatedGames,
+  }) _parseDescription(String pageHtml) {
     final inner = _extractFormattedDescription(pageHtml);
     if (inner == null || inner.isEmpty) {
-      return (html: '', plain: '');
+      return (html: '', plain: '', footerHtml: '', relatedGames: const []);
     }
-    final normalized = _normalizeDescriptionHtml(inner, pageHtml);
-    return (html: normalized, plain: _stripHtml(normalized));
+    final split = _splitDescriptionContent(inner);
+    final normalized = _normalizeDescriptionHtml(split.mainHtml, pageHtml);
+    final footer = split.footerHtml.isEmpty
+        ? ''
+        : _normalizeDescriptionHtml(split.footerHtml, pageHtml);
+    return (
+      html: normalized,
+      plain: _stripHtml(normalized),
+      footerHtml: footer,
+      relatedGames: _parseAlsoCheckOut(split.alsoSectionHtml, pageHtml),
+    );
+  }
+
+  ({String mainHtml, String alsoSectionHtml, String footerHtml})
+      _splitDescriptionContent(String inner) {
+    final alsoMatch = _alsoCheckOutHeading.firstMatch(inner);
+    if (alsoMatch == null) {
+      return (mainHtml: inner, alsoSectionHtml: '', footerHtml: '');
+    }
+
+    final mainHtml = inner.substring(0, alsoMatch.start).trim();
+    var alsoSection = inner.substring(alsoMatch.end).trim();
+
+    var footerHtml = '';
+    final lastIframeEnd = alsoSection.toLowerCase().lastIndexOf('</iframe>');
+    if (lastIframeEnd >= 0) {
+      final promoPart = alsoSection.substring(0, lastIframeEnd + '</iframe>'.length);
+      footerHtml = alsoSection.substring(lastIframeEnd + '</iframe>'.length);
+      footerHtml = footerHtml
+          .replaceFirst(RegExp(r'^\s*</p>', caseSensitive: false), '')
+          .replaceFirst(RegExp(r'^(?:\s*<br\s*/?>\s*)+', caseSensitive: false), '')
+          .trim();
+      alsoSection = promoPart.trim();
+    }
+
+    return (
+      mainHtml: mainHtml,
+      alsoSectionHtml: alsoSection,
+      footerHtml: footerHtml,
+    );
+  }
+
+  List<GamePromoCard> _parseAlsoCheckOut(String sectionHtml, String pageHtml) {
+    if (sectionHtml.trim().isEmpty) {
+      return const [];
+    }
+
+    final cards = <GamePromoCard>[];
+    final seen = <String>{};
+
+    void addCard(GamePromoCard? card) {
+      if (card == null || card.webUrl.isEmpty) {
+        return;
+      }
+      final normalized = card.webUrl.split('?').first;
+      if (seen.add(normalized)) {
+        cards.add(card);
+      }
+    }
+
+    for (final widget in _gameWidgetBlock.allMatches(sectionHtml)) {
+      addCard(_parsePromoFromSummary(widget.group(1)!, widget.group(0)!, pageHtml));
+    }
+    for (final iframe in _promoIframe.allMatches(sectionHtml)) {
+      addCard(_parsePromoFromBlock(iframe.group(0)!, pageHtml));
+    }
+
+    return cards;
+  }
+
+  GamePromoCard? _parsePromoFromBlock(String block, String pageHtml) {
+    final summaryMatch = RegExp(
+      r'<div class="game_summary">([\s\S]*?)</div>',
+      caseSensitive: false,
+    ).firstMatch(block);
+    if (summaryMatch != null) {
+      return _parsePromoFromSummary(summaryMatch.group(1)!, block, pageHtml);
+    }
+
+    final parsed = ItchEmbedParser.parseIframeBlock(block);
+    if (parsed == null) {
+      return null;
+    }
+
+    return GamePromoCard(
+      title: parsed.card.title,
+      webUrl: parsed.card.webUrl,
+      author: parsed.card.author,
+      summary: parsed.card.summary,
+      embedId: parsed.embedId,
+      coverUrl: _extractPromoCover(block, pageHtml) ?? parsed.card.coverUrl,
+      platforms: _parsePromoPlatforms(block),
+    );
+  }
+
+  GamePromoCard? _parsePromoFromSummary(
+    String summaryHtml,
+    String blockHtml,
+    String pageHtml,
+  ) {
+    final titleMatch = RegExp(
+      r'class="game_title"[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>',
+      caseSensitive: false,
+    ).firstMatch(summaryHtml);
+    if (titleMatch == null) {
+      return _parsePromoFromBlock(blockHtml, pageHtml);
+    }
+
+    final authorMatch = RegExp(
+      r'class="author_row"[\s\S]*?<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>',
+      caseSensitive: false,
+    ).firstMatch(summaryHtml);
+    final summaryMatch = RegExp(
+      r'<h3[^>]*title="([^"]*)"',
+      caseSensitive: false,
+    ).firstMatch(summaryHtml);
+    final summaryText = summaryMatch?.group(1)?.trim().isNotEmpty == true
+        ? summaryMatch!.group(1)!.trim()
+        : _stripHtml(
+            RegExp(r'<h3[^>]*>([\s\S]*?)</h3>', caseSensitive: false)
+                    .firstMatch(summaryHtml)
+                    ?.group(1) ??
+                '',
+          );
+
+    return GamePromoCard(
+      title: _stripHtml(titleMatch.group(2) ?? ''),
+      webUrl: _normalizePromoUrl(titleMatch.group(1)!),
+      author: authorMatch != null ? _stripHtml(authorMatch.group(2) ?? '') : null,
+      authorUrl: authorMatch?.group(1),
+      summary: summaryText.isEmpty ? null : summaryText,
+      coverUrl: _extractPromoCover(blockHtml, pageHtml),
+      platforms: _parsePromoPlatforms(blockHtml),
+    );
+  }
+
+  String _normalizePromoUrl(String url) {
+    return url.split('?').first.split('#').first;
+  }
+
+  String? _extractPromoCover(String block, String pageHtml) {
+    final srcset = RegExp(
+      r'''(?:src|srcset)="([^"]*img\.itch\.zone[^"]+)''',
+      caseSensitive: false,
+    ).firstMatch(block);
+    if (srcset != null) {
+      var url = srcset.group(1)!;
+      if (url.contains(' ')) {
+        url = url.split(RegExp(r'\s+')).first;
+      }
+      return ItchImageUrls.toOriginal(url) ?? url;
+    }
+    final fileMatch = RegExp(
+      r'''(?:src|srcset)="\./?[^"]*_files/([^"?]+)''',
+      caseSensitive: false,
+    ).firstMatch(block);
+    if (fileMatch != null) {
+      return _resolveItchImageFile(pageHtml, fileMatch.group(1)!);
+    }
+    return null;
+  }
+
+  List<String> _parsePromoPlatforms(String block) {
+    final platforms = <String>[];
+    if (block.contains('icon-windows')) {
+      platforms.add('windows');
+    }
+    if (block.contains('icon-apple')) {
+      platforms.add('osx');
+    }
+    if (block.contains('icon-tux')) {
+      platforms.add('linux');
+    }
+    if (block.contains('icon-android')) {
+      platforms.add('android');
+    }
+    return platforms;
   }
 
   String? _extractFormattedDescription(String pageHtml) {
@@ -222,8 +419,8 @@ class ItchGamePageParser {
     }
     final contentStart = start.end;
     final end = _moreInformationBlock.firstMatch(pageHtml.substring(contentStart));
-    final endIndex = end != null ? contentStart + end.start : -1;
-    if (endIndex < 0) {
+    final endIndex = end != null ? contentStart + end.start : pageHtml.length;
+    if (endIndex <= contentStart) {
       return null;
     }
     var chunk = pageHtml.substring(contentStart, endIndex).trim();
@@ -267,11 +464,11 @@ class ItchGamePageParser {
     return result;
   }
 
-  /// Убирает itch-embed в описании (на мобилке даёт пустой блок).
+  /// Схлопывает лишние пустые блоки в описании.
   String _collapseDescriptionWhitespace(String html) {
     return html.replaceAll(
       RegExp(
-        r'<iframe[^>]*src="[^"]*itch\.io/embed/[^"]*"[^>]*>\s*</iframe>',
+        r'<(?:p|div)[^>]*>\s*(?:&nbsp;|\s|<br\s*/?>)*</(?:p|div)>',
         caseSensitive: false,
       ),
       '',
@@ -566,20 +763,78 @@ class ItchGamePageParser {
     return (null, null);
   }
 
-  Map<String, String> _parseInfoPanel(String html) {
+  List<GameInfoEntry> _parseInfoEntries(String html) {
     final panel = _infoPanel.firstMatch(html);
     if (panel == null) {
-      return {};
+      return const [];
     }
-    final rows = <String, String>{};
+
+    final entries = <GameInfoEntry>[];
     for (final row in _infoRow.allMatches(panel.group(1)!)) {
-      final key = _stripHtml(row.group(1) ?? '');
-      final value = _stripHtml(row.group(2) ?? '');
-      if (key.isNotEmpty && value.isNotEmpty) {
-        rows[key] = value;
+      final label = _stripHtml(row.group(1) ?? '');
+      final valueHtml = row.group(2) ?? '';
+      if (label.isEmpty) {
+        continue;
       }
+
+      if (valueHtml.contains('aggregate_rating') ||
+          valueHtml.contains('ratingValue')) {
+        final avg = double.tryParse(
+          RegExp(
+            r'ratingValue[^>]*content="([0-9.]+)"',
+            caseSensitive: false,
+          ).firstMatch(valueHtml)?.group(1) ??
+              '',
+        );
+        final countRaw = RegExp(
+          r'ratingCount[^>]*content="([0-9,]+)"',
+          caseSensitive: false,
+        ).firstMatch(valueHtml)?.group(1);
+        final count = int.tryParse(countRaw?.replaceAll(',', '') ?? '');
+        entries.add(
+          GameInfoEntry(
+            label: label,
+            ratingAverage: avg,
+            ratingCount: count,
+            plainText: count != null ? '($count)' : '',
+          ),
+        );
+        continue;
+      }
+
+      final links = <GameInfoLink>[];
+      for (final link in RegExp(
+        r'<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>',
+        caseSensitive: false,
+      ).allMatches(valueHtml)) {
+        final text = _stripHtml(link.group(2) ?? '');
+        final url = link.group(1) ?? '';
+        if (text.isNotEmpty && url.isNotEmpty) {
+          links.add(GameInfoLink(text: text, url: url));
+        }
+      }
+
+      final plain = links.isEmpty ? _stripHtml(valueHtml) : '';
+      if (plain.isEmpty && links.isEmpty) {
+        continue;
+      }
+      entries.add(
+        GameInfoEntry(label: label, plainText: plain, links: links),
+      );
     }
-    return rows;
+    return entries;
+  }
+
+  Map<String, String> _infoEntriesToMap(List<GameInfoEntry> entries) {
+    return {
+      for (final entry in entries)
+        entry.label: entry.isRating
+            ? '${entry.ratingAverage?.toStringAsFixed(1) ?? ''} ${entry.plainText}'
+                .trim()
+            : (entry.links.isNotEmpty
+                ? entry.links.map((link) => link.text).join(', ')
+                : entry.plainText),
+    };
   }
 
   List<String> _parsePlatforms(
@@ -651,6 +906,9 @@ class ItchGamePageParser {
       shortText: _firstNonEmpty([parsed.shortText, seed.shortText]) ?? '',
       description: parsed.description,
       descriptionHtml: parsed.descriptionHtml,
+      descriptionFooterHtml: parsed.descriptionFooterHtml,
+      relatedGames: parsed.relatedGames,
+      infoEntries: parsed.infoEntries,
       iconUrl: ItchImageUrls.toOriginal(_firstNonEmpty([parsed.iconUrl, seed.coverUrl])),
       coverUrl: ItchImageUrls.toOriginal(_firstNonEmpty([parsed.coverUrl, seed.coverUrl])),
       headerCoverUrl: _firstNonEmpty([

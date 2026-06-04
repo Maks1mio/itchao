@@ -82,6 +82,9 @@ object ApkInstaller {
                     }
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     setPackageSource(PackageInstaller.PACKAGE_SOURCE_DOWNLOADED_FILE)
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -99,6 +102,7 @@ object ApkInstaller {
             }
 
         val sessionId = packageInstaller.createSession(params)
+        InstallSessionRegistry.register(sessionId, gameId, targetPackage ?: packageName)
         val session = packageInstaller.openSession(sessionId)
         try {
             file.inputStream().use { input ->
@@ -112,6 +116,7 @@ object ApkInstaller {
                 Intent(context, InstallStatusReceiver::class.java).apply {
                     action = ACTION_INSTALL_COMMIT
                     setPackage(context.packageName)
+                    putExtra(PackageInstaller.EXTRA_SESSION_ID, sessionId)
                     putExtra(EXTRA_GAME_ID, gameId)
                     if (!packageName.isNullOrBlank()) {
                         putExtra(EXTRA_PACKAGE_NAME, packageName)

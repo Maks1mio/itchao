@@ -6,7 +6,7 @@ import '../../data/models.dart';
 import '../auth/auth_controller.dart';
 import '../collections/collections_controller.dart';
 import '../library/library_controller.dart';
-import 'game_tab_seed.dart';
+import '../game/game_tab_seed.dart';
 
 final gamePageFetcherProvider = Provider<GamePageFetcher>((ref) {
   final fetcher = GamePageFetcher();
@@ -21,9 +21,8 @@ final gameSeedProvider = Provider.family<LibraryGame?, int>((ref, gameId) {
 });
 
 final gameDetailProvider = FutureProvider.family<GameDetail, int>((ref, gameId) async {
-  ref.watch(libraryControllerProvider);
-  ref.watch(collectionsControllerProvider);
-  final seed = resolveGameSeed(ref, gameId);
+  // Read-only seed: do not refetch HTML when library/collections sync in background.
+  final seed = resolveGameSeedForFetch(ref, gameId);
   final webUrl = await ref.read(gameUrlResolverProvider).resolve(
     gameId: gameId,
     seed: seed,
@@ -33,6 +32,14 @@ final gameDetailProvider = FutureProvider.family<GameDetail, int>((ref, gameId) 
     seed: seed,
   );
   ref.read(gameUrlResolverProvider).remember(gameId, detail.webUrl);
+  return detail;
+});
+
+final gameDetailByUrlProvider = FutureProvider.family<GameDetail, String>((ref, webUrl) async {
+  final detail = await ref.read(gamePageFetcherProvider).fetch(webUrl: webUrl);
+  if (detail.id > 0) {
+    ref.read(gameUrlResolverProvider).remember(detail.id, detail.webUrl);
+  }
   return detail;
 });
 

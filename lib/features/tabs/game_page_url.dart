@@ -40,5 +40,53 @@ String? itchGameTabUrlFromHistory(String url) {
   return null;
 }
 
+/// Нативная вкладка игры из публичного itch.io URL.
+///
+/// `author.itch.io/game` не содержит id, поэтому открываем через `from-url`:
+/// страница сама загрузит HTML, распарсит id и дальше будет работать как обычная игра.
+String? itchGameTabUrlFromWebUrl(String url) {
+  final parsed = Uri.tryParse(url.trim());
+  if (parsed == null || (parsed.scheme != 'http' && parsed.scheme != 'https')) {
+    return null;
+  }
+
+  final numeric = itchGameTabUrlFromHistory(url);
+  if (numeric != null) {
+    return numeric;
+  }
+
+  final host = parsed.host.toLowerCase();
+  final isCreatorSubdomain = host.endsWith('.itch.io') &&
+      host != 'itch.io' &&
+      host != 'www.itch.io';
+  if (!isCreatorSubdomain || parsed.pathSegments.length != 1) {
+    return null;
+  }
+
+  final slug = parsed.pathSegments.first.trim();
+  if (slug.isEmpty) {
+    return null;
+  }
+
+  final normalizedWebUrl = parsed.replace(fragment: '').toString();
+  return Uri(
+    scheme: 'itch',
+    host: 'games',
+    pathSegments: const ['from-url'],
+    queryParameters: {
+      'url': normalizedWebUrl,
+      'label': _titleFromSlug(slug),
+    },
+  ).toString();
+}
+
+String _titleFromSlug(String slug) {
+  return slug
+      .split(RegExp(r'[-_]+'))
+      .where((part) => part.isNotEmpty)
+      .map((part) => part[0].toUpperCase() + part.substring(1))
+      .join(' ');
+}
+
 /// Публичный URL на itch.io (WebView, «Открыть на сайте»). Без `url` — null.
 String? itchGameWebUrl(LibraryGame game) => GameWebUrl.pick(game.url, null);

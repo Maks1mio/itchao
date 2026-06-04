@@ -7,6 +7,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../../../../core/theme/itch_colors.dart';
 import '../../../../core/web/itch_webview.dart';
 import '../../browsing_history_controller.dart';
+import '../../game_page_url.dart';
 import '../../itch_url.dart';
 import '../../tabs_controller.dart';
 import '../tab_back_handler_provider.dart';
@@ -43,6 +44,7 @@ class _ItchBrowserPageState extends ConsumerState<ItchBrowserPage> {
     _currentUrl = widget.initialUrl;
     _controller = ItchWebView.create(
       onUrlChanged: _onUrlChanged,
+      onNavigationUrl: _handleNavigationUrl,
       onLoadingChanged: (loading) {
         setState(() => _isLoading = loading);
         if (!loading) {
@@ -55,13 +57,9 @@ class _ItchBrowserPageState extends ConsumerState<ItchBrowserPage> {
 
   @override
   void dispose() {
-    final back = ref.read(tabBackHandlerProvider.notifier);
-    final chrome = ref.read(tabChromeProvider.notifier);
+    ref.read(tabBackHandlerProvider.notifier).state = null;
+    ref.read(tabChromeProvider.notifier).clearPageMenu(showTitle: true);
     super.dispose();
-    Future.microtask(() {
-      back.state = null;
-      chrome.clearPageMenu(showTitle: true);
-    });
   }
 
   void _bindChrome() {
@@ -107,6 +105,19 @@ class _ItchBrowserPageState extends ConsumerState<ItchBrowserPage> {
     _schedulePersistUrl(url);
   }
 
+  bool _handleNavigationUrl(String url) {
+    final gameTabUrl = itchGameTabUrlFromWebUrl(url);
+    if (gameTabUrl == null) {
+      return false;
+    }
+    final label = ItchUrl.parse(gameTabUrl).displayLabel ?? ItchUrl.labelFor(gameTabUrl);
+    ref.read(tabsControllerProvider.notifier).navigateActiveTab(
+      gameTabUrl,
+      label: label,
+    );
+    return true;
+  }
+
   void _schedulePersistUrl(String url) {
     Future.microtask(() {
       if (!mounted) {
@@ -145,6 +156,12 @@ class _ItchBrowserPageState extends ConsumerState<ItchBrowserPage> {
       return;
     }
     final uri = trimmed.contains('://') ? Uri.parse(trimmed) : Uri.parse('https://$trimmed');
+    final gameTabUrl = itchGameTabUrlFromWebUrl(uri.toString());
+    if (gameTabUrl != null) {
+      final label = ItchUrl.parse(gameTabUrl).displayLabel ?? ItchUrl.labelFor(gameTabUrl);
+      ref.read(tabsControllerProvider.notifier).navigateActiveTab(gameTabUrl, label: label);
+      return;
+    }
     await _controller.loadRequest(uri);
   }
 

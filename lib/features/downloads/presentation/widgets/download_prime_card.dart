@@ -25,12 +25,18 @@ class DownloadPrimeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rawProgress = task.status == DownloadStatus.completed ? 1.0 : task.progress;
+    final rawProgress = task.status == DownloadStatus.completed ||
+            task.status == DownloadStatus.awaitingInstall ||
+            task.status == DownloadStatus.installing
+        ? 1.0
+        : task.progress;
     final progress = _safeProgress(rawProgress);
-    final speedLine = formatDownloadSpeedLine(
-      bytesPerSecond: task.bytesPerSecond,
-      etaSeconds: task.etaSeconds,
-    );
+    final speedLine = task.status == DownloadStatus.running
+        ? formatDownloadSpeedLine(
+            bytesPerSecond: task.bytesPerSecond,
+            etaSeconds: task.etaSeconds,
+          )
+        : '';
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
@@ -94,9 +100,14 @@ class DownloadPrimeCard extends StatelessWidget {
                       ),
                       const Spacer(),
                       Text(
-                        task.status == DownloadStatus.queued
-                            ? 'В очереди…'
-                            : speedLine,
+                        switch (task.status) {
+                          DownloadStatus.queued => 'В очереди…',
+                          DownloadStatus.awaitingInstall => 'Готово к установке',
+                          DownloadStatus.installing => 'Установка…',
+                          DownloadStatus.running when task.progress > 0 =>
+                            '${(task.progress * 100).round()}%',
+                          _ => speedLine.isNotEmpty ? speedLine : 'Загрузка…',
+                        },
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.center,

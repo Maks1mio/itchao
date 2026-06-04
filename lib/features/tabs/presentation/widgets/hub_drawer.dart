@@ -207,69 +207,77 @@ class _RecentGameCard extends StatelessWidget {
   final LastPlayedGame game;
   final VoidCallback onOpen;
 
+  static const _coverAspect = 215 / 170;
+
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
-      child: Material(
-        color: ItchColors.item,
-        borderRadius: BorderRadius.circular(6),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onOpen,
-            child: SizedBox(
-            height: 88,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (game.coverUrl != null && game.coverUrl!.isNotEmpty)
-                  ItchCachedNetworkImage(
-                    url: game.coverUrl!,
-                    width: double.infinity,
-                    height: 88,
-                    fit: BoxFit.cover,
-                  )
-                else
-                  const ColoredBox(color: ItchColors.darkMineShaft),
-                Container(
-                  alignment: Alignment.center,
-                  color: Colors.black.withValues(alpha: 0.35),
-                  child: const Icon(Icons.play_circle_fill, size: 44, color: Colors.white70),
-                ),
-                Positioned(
-                  left: 10,
-                  right: 10,
-                  bottom: 8,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        game.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: ItchColors.ivory,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                          shadows: [Shadow(color: Colors.black87, blurRadius: 6)],
-                        ),
-                      ),
-                      Text(
-                        'Последний раз в игре ${formatTimeAgoRu(game.lastPlayedAt)}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: ItchColors.secondaryText,
-                          fontSize: 11,
-                          shadows: [Shadow(color: Colors.black87, blurRadius: 6)],
-                        ),
-                      ),
+    return Material(
+      color: ItchColors.item,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onOpen,
+        child: AspectRatio(
+          aspectRatio: _coverAspect,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (game.coverUrl != null && game.coverUrl!.isNotEmpty)
+                ItchCachedNetworkImage(
+                  url: game.coverUrl!,
+                  fit: BoxFit.cover,
+                )
+              else
+                const ColoredBox(color: ItchColors.darkMineShaft),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.2),
+                      Colors.black.withValues(alpha: 0.75),
                     ],
                   ),
                 ),
-              ],
-            ),
+              ),
+              const Center(
+                child: Icon(Icons.play_circle_fill, size: 52, color: Colors.white70),
+              ),
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 10,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      game.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: ItchColors.ivory,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                        height: 1.2,
+                        shadows: [Shadow(color: Colors.black87, blurRadius: 6)],
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Последний раз в игре ${formatTimeAgoRu(game.lastPlayedAt)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: ItchColors.secondaryText,
+                        fontSize: 11,
+                        shadows: [Shadow(color: Colors.black87, blurRadius: 6)],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),

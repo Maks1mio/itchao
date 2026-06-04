@@ -3,6 +3,8 @@ package com.example.itchao
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -27,6 +29,7 @@ class MainActivity : FlutterActivity() {
                     val info = packageManager.getPackageArchiveInfo(path, 0)
                     if (info != null) {
                         info.applicationInfo?.sourceDir = path
+                        info.applicationInfo?.publicSourceDir = path
                     }
                     result.success(info?.packageName)
                 }
@@ -45,18 +48,22 @@ class MainActivity : FlutterActivity() {
                     }
                     val gameId = call.argument<Int>("gameId") ?: -1
                     val packageName = call.argument<String>("package")
-                    try {
-                        ApkInstaller.install(this, path, gameId, packageName)
-                        result.success(null)
-                    } catch (e: Exception) {
-                        val code =
-                            if (e.message?.contains("настройках") == true) {
-                                "install_permission_required"
-                            } else {
-                                "install_failed"
+                    Thread {
+                        try {
+                            ApkInstaller.install(this, path, gameId, packageName)
+                            Handler(Looper.getMainLooper()).post { result.success(null) }
+                        } catch (e: Exception) {
+                            val code =
+                                if (e.message?.contains("настройках") == true) {
+                                    "install_permission_required"
+                                } else {
+                                    "install_failed"
+                                }
+                            Handler(Looper.getMainLooper()).post {
+                                result.error(code, e.message, null)
                             }
-                        result.error(code, e.message, null)
-                    }
+                        }
+                    }.start()
                 }
                 "launchApp" -> {
                     val packageName = call.argument<String>("package")
