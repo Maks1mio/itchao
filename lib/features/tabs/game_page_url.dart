@@ -90,3 +90,16 @@ String _titleFromSlug(String slug) {
 
 /// Публичный URL на itch.io (WebView, «Открыть на сайте»). Без `url` — null.
 String? itchGameWebUrl(LibraryGame game) => GameWebUrl.pick(game.url, null);
+
+/// itch.io URL из вкладки `itch://games/...?url=...` (для браузерного режима).
+String? itchGameWebUrlFromTab(String tabUrl) {
+  final uri = Uri.tryParse(tabUrl);
+  if (uri == null || uri.scheme != 'itch' || uri.host != 'games') {
+    return null;
+  }
+  final webUrl = uri.queryParameters['url']?.trim();
+  if (webUrl == null || webUrl.isEmpty) {
+    return null;
+  }
+  return webUrl;
+}

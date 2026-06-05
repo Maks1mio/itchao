@@ -8,6 +8,8 @@ import '../../install/installed_library_games.dart';
 import '../../library/library_controller.dart';
 import '../../settings/presentation/settings_page.dart';
 import '../itch_url.dart';
+import '../../settings/game_page_browser_mode_provider.dart';
+import '../game_page_url.dart';
 import '../itch_web_urls.dart';
 import 'tab_chrome_provider.dart';
 import 'new_tab_page.dart';
@@ -125,6 +127,12 @@ class _TabContentViewState extends ConsumerState<TabContentView> {
         }
         return const ItchTabBody(child: CollectionsPage());
       case 'games':
+        if (ref.watch(gamePageBrowserModeProvider)) {
+          final webUrl = itchGameWebUrlFromTab(widget.url);
+          if (webUrl != null) {
+            return ItchBrowserPage(initialUrl: webUrl);
+          }
+        }
         if (parsed.segment == 'from-url') {
           final uri = Uri.tryParse(widget.url);
           final webUrl = uri?.queryParameters['url'];
